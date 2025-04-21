@@ -56,3 +56,76 @@ This project is licensed under the MIT License. See the LICENSE file for more de
 
 
 
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: Low frame rate detected (17.4 FPS)
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: Low frame rate detected (17.7 FPS)
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
+[WARNING] Warning: High system load detected
+Error in get_frame: object of type 'function' has no len()
