@@ -13,6 +13,7 @@ class Camera:
         self.frame_rate = frame_rate
         self.video = None
         self.is_mock_camera = False
+        self.is_tracking = False  # Add tracking state
         self.setup_camera()
         
         # Stats tracking

@@ -91,16 +91,51 @@ def generate_frames():
                 eventlet.sleep(1)
                 continue
                 
-            frame = video_stream.get_frame()
-            if frame is not None and isinstance(frame, bytes):
+            # Get frame from camera
+            frame_bytes = video_stream.get_frame()
+            if frame_bytes is not None and isinstance(frame_bytes, bytes):
+                # Convert JPEG bytes back to frame for processing
+                frame_buffer = np.frombuffer(frame_bytes, dtype=np.uint8)
+                frame = cv2.imdecode(frame_buffer, cv2.IMREAD_COLOR)
+                
+                if frame is not None and frame.size > 0 and hasattr(video_stream, 'is_tracking') and video_stream.is_tracking:
+                    try:
+                        # Run detection on frame
+                        detections = detector.detect(frame)
+                        
+                        # Update counter
+                        count = counter.update(detections)
+                        
+                        # Update stats
+                        stats["current_count"] = count
+                        if "total_counts" not in stats:
+                            stats["total_counts"] = []
+                        stats["total_counts"].append(count)
+                        stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"])
+                        stats["minimum"] = min(stats["total_counts"])
+                        stats["peak"] = max(stats["total_counts"])
+                        
+                        # Draw results
+                        frame = draw_results(frame, detections, count)
+                        
+                        # Re-encode processed frame
+                        _, processed_frame = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                        frame_bytes = processed_frame.tobytes()
+                        
+                        # Emit updated stats
+                        socketio.emit('stats_update', stats)
+                    except Exception as e:
+                        print(f"Error during detection: {str(e)}")
+                
                 yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n\r\n')
             else:
                 placeholder = create_placeholder_frame("No frame available")
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
                 eventlet.sleep(0.5)
                 continue
+                
         except Exception as e:
             print(f"Error in frame generation: {str(e)}")
             placeholder = create_placeholder_frame("Error: " + str(e))
