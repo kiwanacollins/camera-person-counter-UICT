@@ -1,4 +1,3 @@
-# filepath: /Users/kiwana/Desktop/camera-person-counter/src/web_app.py
 # Import eventlet first and monkey patch
 import eventlet
 eventlet.monkey_patch()
@@ -22,6 +21,7 @@ from flask_socketio import SocketIO, emit
 from detector.yolo import YOLODetector
 from counter.counter import PersonCounter
 from utils.visualization import draw_results
+from camera.picamera import Camera
 
 # Initialize Flask and SocketIO
 app = Flask(__name__)
@@ -33,7 +33,7 @@ with app.app_context():
     detector = YOLODetector()
     counter = PersonCounter()
     sensitivity = "Medium"
-    current_camera = 0
+    current_camera = 0  # Using /dev/video0 which is the video capture interface
     is_paused = False
     last_frame = None
     system_status = "Active"
@@ -52,11 +52,28 @@ with app.app_context():
 
 class VideoCamera:
     def __init__(self):
-        self.video = cv2.VideoCapture(current_camera)
-        self.video.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.video.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.video.set(cv2.CAP_PROP_FPS, 30)
-        self.lock = eventlet.semaphore.Semaphore()  # Use eventlet's semaphore
+        global current_camera
+        print(f"Initializing camera with ID 0")  # Changed to always try video0 first
+        current_camera = 0  # Changed from 1 to 0
+        retries = 3
+        last_error = None
+        
+        for attempt in range(retries):
+            try:
+                self.camera = Camera(camera_id=current_camera)
+                self.camera.start_camera()
+                print("Camera initialized successfully")
+                break
+            except Exception as e:
+                last_error = str(e)
+                print(f"Attempt {attempt + 1}/{retries} failed: {str(e)}")
+                if attempt < retries - 1:
+                    print("Retrying in 2 seconds...")
+                    time.sleep(2)
+                    continue
+                raise RuntimeError(f"Failed to initialize camera after {retries} attempts. Last error: {last_error}")
+        
+        self.lock = eventlet.semaphore.Semaphore()
         self.is_tracking = False
         self.last_frame = None
         self.frame_count = 0
@@ -64,17 +81,16 @@ class VideoCamera:
         self.fps = 0
 
     def __del__(self):
-        self.video.release()
+        self.camera.stop_camera()
 
     def get_frame(self):
         global is_paused, last_frame, system_status, last_log_time, logs, logging_enabled, logging_frequency
         
-        # If paused, return the last frame
         if is_paused and self.last_frame is not None:
             return self.last_frame
             
         with self.lock:
-            success, frame = self.video.read()
+            success, frame = self.camera.capture_frame()
             
             # Calculate FPS
             self.frame_count += 1
@@ -85,7 +101,6 @@ class VideoCamera:
                 self.fps_start_time = time.time()
             
             if not success:
-                # Camera error
                 system_status = "Error"
                 add_error("camera-disconnected", "Camera disconnected", 
                          "The camera connection has been lost. Please check your camera settings.")
@@ -362,4 +377,20 @@ def handle_resolve_error(data):
         log_message(f"Error {error_id} resolved")
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='0.0.0.0')
+    # Try to initialize the video stream with retries
+    max_retries = 3
+    retry_delay = 2
+    
+    for attempt in range(max_retries):
+        try:
+            video_stream = VideoCamera()
+            break
+        except Exception as e:
+            if attempt < max_retries - 1:
+                print(f"Failed to initialize camera (attempt {attempt + 1}/{max_retries}). Retrying in {retry_delay} seconds...")
+                time.sleep(retry_delay)
+            else:
+                print(f"Failed to initialize camera after {max_retries} attempts. Last error: {str(e)}")
+                raise
+    
+    socketio.run(app, debug=False, host='0.0.0.0')
