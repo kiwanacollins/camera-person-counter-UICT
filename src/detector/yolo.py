@@ -27,6 +27,10 @@ class YOLODetector:
             self.output_layers = [self.layer_names[i[0] - 1] for i in output_layers_indices]
         else:
             self.output_layers = [self.layer_names[i - 1] for i in output_layers_indices]
+            
+        # Add configurable confidence threshold for sensitivity adjustment
+        self.confidence_threshold = CONFIDENCE_THRESHOLD
+        self.nms_threshold = NMS_THRESHOLD
         
     def detect(self, frame):
         height, width = frame.shape[:2]
@@ -50,7 +54,8 @@ class YOLODetector:
                 class_id = np.argmax(scores)
                 confidence = scores[class_id]
                 
-                if confidence > CONFIDENCE_THRESHOLD and class_id == 0:  # 0 is person class
+                # Use the instance's confidence threshold instead of the global constant
+                if confidence > self.confidence_threshold and class_id == 0:  # 0 is person class
                     # Object detected
                     center_x = int(detection[0] * width)
                     center_y = int(detection[1] * height)
@@ -65,8 +70,8 @@ class YOLODetector:
                     confidences.append(float(confidence))
                     class_ids.append(class_id)
         
-        # Apply non-maximum suppression
-        indexes = cv2.dnn.NMSBoxes(boxes, confidences, CONFIDENCE_THRESHOLD, NMS_THRESHOLD)
+        # Apply non-maximum suppression with instance threshold
+        indexes = cv2.dnn.NMSBoxes(boxes, confidences, self.confidence_threshold, self.nms_threshold)
         
         detections = []
         if len(indexes) > 0:

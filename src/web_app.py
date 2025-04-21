@@ -1,3 +1,4 @@
+# filepath: /Users/kiwana/Desktop/camera-person-counter/src/web_app.py
 # Import eventlet first and monkey patch
 import eventlet
 eventlet.monkey_patch()
@@ -7,10 +8,14 @@ import cv2
 import base64
 import json
 import threading
-from datetime import datetime
+import os
+import csv
+import time
+import io
+from datetime import datetime, timedelta
 
 # Flask and SocketIO imports
-from flask import Flask, render_template, Response, jsonify
+from flask import Flask, render_template, Response, jsonify, send_file, request
 from flask_socketio import SocketIO, emit
 
 # Local imports
@@ -29,6 +34,12 @@ with app.app_context():
     counter = PersonCounter()
     sensitivity = "Medium"
     current_camera = 0
+    is_paused = False
+    last_frame = None
+    system_status = "Active"
+    logging_enabled = True
+    logging_frequency = 60  # seconds
+    last_log_time = datetime.now()
     stats = {
         "current_count": 0,
         "average": 0,
@@ -37,6 +48,7 @@ with app.app_context():
         "total_counts": []
     }
     logs = []
+    errors = []
 
 class VideoCamera:
     def __init__(self):
@@ -46,34 +58,109 @@ class VideoCamera:
         self.video.set(cv2.CAP_PROP_FPS, 30)
         self.lock = eventlet.semaphore.Semaphore()  # Use eventlet's semaphore
         self.is_tracking = False
+        self.last_frame = None
+        self.frame_count = 0
+        self.fps_start_time = time.time()
+        self.fps = 0
 
     def __del__(self):
         self.video.release()
 
     def get_frame(self):
+        global is_paused, last_frame, system_status, last_log_time, logs, logging_enabled, logging_frequency
+        
+        # If paused, return the last frame
+        if is_paused and self.last_frame is not None:
+            return self.last_frame
+            
         with self.lock:
             success, frame = self.video.read()
+            
+            # Calculate FPS
+            self.frame_count += 1
+            elapsed_time = time.time() - self.fps_start_time
+            if elapsed_time > 1.0:
+                self.fps = self.frame_count / elapsed_time
+                self.frame_count = 0
+                self.fps_start_time = time.time()
+            
             if not success:
+                # Camera error
+                system_status = "Error"
+                add_error("camera-disconnected", "Camera disconnected", 
+                         "The camera connection has been lost. Please check your camera settings.")
+                socketio.emit('system_status', {'state': system_status, 'message': 'Camera disconnected'})
                 return None
+            else:
+                system_status = "Active"
 
             if self.is_tracking:
                 with app.app_context():
-                    detections = detector.detect(frame)
-                    count = counter.update(detections)
-                    frame = draw_results(frame, detections, count)
-                    
-                    # Update statistics
-                    stats["current_count"] = count
-                    stats["total_counts"].append(count)
-                    stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"])
-                    stats["minimum"] = min(stats["total_counts"])
-                    stats["peak"] = max(stats["total_counts"])
-                    
-                    socketio.emit('stats_update', stats)
+                    try:
+                        # Set sensitivity based on the global setting
+                        sensitivity_values = {
+                            "Low": 0.4,
+                            "Medium": 0.5,
+                            "High": 0.6
+                        }
+                        detector.confidence_threshold = sensitivity_values.get(sensitivity, 0.5)
+                        
+                        detections = detector.detect(frame)
+                        count = counter.update(detections)
+                        frame = draw_results(frame, detections, count)
+                        
+                        # Update statistics
+                        stats["current_count"] = count
+                        stats["total_counts"].append(count)
+                        stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"])
+                        stats["minimum"] = min(stats["total_counts"])
+                        stats["peak"] = max(stats["total_counts"])
+                        
+                        # Limit stats history to prevent memory issues
+                        if len(stats["total_counts"]) > 1000:
+                            stats["total_counts"] = stats["total_counts"][-1000:]
+                            
+                        socketio.emit('stats_update', stats)
+                        
+                        # Log data based on frequency setting
+                        if logging_enabled:
+                            current_time = datetime.now()
+                            if (current_time - last_log_time).total_seconds() >= logging_frequency:
+                                log_entry = {
+                                    "timestamp": current_time.isoformat(),
+                                    "count": count,
+                                    "status": system_status
+                                }
+                                logs.append(log_entry)
+                                
+                                # Limit logs to 10000 entries
+                                if len(logs) > 10000:
+                                    logs = logs[-10000:]
+                                    
+                                last_log_time = current_time
+                    except Exception as e:
+                        print(f"Error during detection: {str(e)}")
+                        system_status = "Error"
+                        add_error("detection-error", "Detection error", 
+                                 f"An error occurred during people detection: {str(e)}")
+                        socketio.emit('system_status', {'state': system_status, 'message': 'Detection error'})
+
+            # Check for low frame rate
+            if self.fps < 10 and self.is_tracking:
+                system_status = "Warning"
+                add_error("low-fps", "Low frame rate detected", 
+                         f"The current frame rate ({self.fps:.1f} FPS) is lower than recommended. This may affect detection accuracy.")
+                socketio.emit('system_status', {'state': system_status, 'message': 'Low frame rate'})
+                
+            # Add FPS to frame
+            cv2.putText(frame, f"FPS: {self.fps:.1f}", (10, 30), 
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
 
             # Encode the frame
             _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            return jpeg.tobytes()
+            self.last_frame = jpeg.tobytes()
+            last_frame = self.last_frame
+            return self.last_frame
 
 video_stream = VideoCamera()
 
@@ -94,46 +181,185 @@ def video_feed():
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+def log_message(message):
+    """Add a message to the logs with timestamp"""
+    logs.append({
+        "timestamp": datetime.now().isoformat(),
+        "message": message,
+        "count": stats["current_count"],
+        "status": system_status
+    })
+
+def add_error(error_id, message, details):
+    """Add an error to the error list if it doesn't already exist"""
+    # Check if error with this ID already exists
+    for error in errors:
+        if error["id"] == error_id:
+            return
+    
+    errors.append({
+        "id": error_id,
+        "message": message,
+        "details": details,
+        "timestamp": datetime.now().isoformat()
+    })
+    socketio.emit('new_error', {
+        "id": error_id,
+        "message": message,
+        "details": details,
+        "timestamp": datetime.now().isoformat()
+    })
+
 @socketio.on('toggle_tracking')
 def handle_tracking(data):
     global video_stream
     video_stream.is_tracking = data['tracking']
     log_message(f"Tracking {'started' if video_stream.is_tracking else 'stopped'}")
 
+@socketio.on('pause_video')
+def handle_pause(data):
+    global is_paused
+    is_paused = data['paused']
+    log_message(f"Video feed {'paused' if is_paused else 'resumed'}")
+
 @socketio.on('change_camera')
-def handle_camera(data):
-    global video_stream, current_camera
-    current_camera = int(data['camera'])
-    if video_stream:
-        del video_stream
-    video_stream = VideoCamera()
-    log_message(f"Changed to camera {current_camera}")
+def handle_camera_change(data):
+    global current_camera, video_stream
+    try:
+        new_camera = int(data['camera'])
+        if new_camera != current_camera:
+            current_camera = new_camera
+            # Recreate the video stream with the new camera
+            video_stream = VideoCamera()
+            log_message(f"Camera changed to {current_camera}")
+    except Exception as e:
+        add_error("camera-change-error", "Camera change failed", str(e))
 
-@socketio.on('change_sensitivity')
-def handle_sensitivity(data):
-    global sensitivity
-    sensitivity = data['level']
-    log_message(f"Detection sensitivity set to {sensitivity}")
+@socketio.on('save_config')
+def handle_save_config(data):
+    global sensitivity, logging_enabled, logging_frequency
+    
+    try:
+        # Update sensitivity
+        if 'sensitivity' in data:
+            sensitivity = data['sensitivity']
+        
+        # Update logging settings
+        if 'logging' in data:
+            logging_enabled = data['logging'].get('enabled', True)
+            logging_frequency = int(data['logging'].get('frequency', 60))
+        
+        log_message(f"Configuration updated: Sensitivity={sensitivity}, Logging={logging_enabled}, Frequency={logging_frequency}s")
+    except Exception as e:
+        add_error("config-save-error", "Failed to save configuration", str(e))
 
-def log_message(message):
-    logs.append({
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "message": message
-    })
-    socketio.emit('log_update', logs[-1])
+@socketio.on('test_camera')
+def handle_test_camera(data):
+    camera_id = int(data['camera'])
+    try:
+        test_cam = cv2.VideoCapture(camera_id)
+        if test_cam.isOpened():
+            test_cam.release()
+            socketio.emit('camera_test_result', {
+                'success': True,
+                'message': f"Camera {camera_id} is working properly"
+            })
+        else:
+            socketio.emit('camera_test_result', {
+                'success': False,
+                'message': f"Camera {camera_id} cannot be opened"
+            })
+            add_error(f"camera-test-{camera_id}", f"Camera {camera_id} test failed", 
+                     f"Could not access camera {camera_id}. Please check if it's connected properly.")
+    except Exception as e:
+        socketio.emit('camera_test_result', {
+            'success': False,
+            'message': str(e)
+        })
+        add_error(f"camera-test-{camera_id}", f"Camera {camera_id} test error", str(e))
 
-# Ensure camera is released when the application stops
-def cleanup():
-    if video_stream:
-        del video_stream
+@socketio.on('refresh_stats')
+def handle_refresh_stats():
+    socketio.emit('stats_update', stats)
+    log_message("Statistics manually refreshed")
 
-import atexit
-atexit.register(cleanup)
+@app.route('/export_logs_csv')
+def export_logs_csv():
+    # Create a CSV in memory
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(['Timestamp', 'Count', 'Status'])
+    
+    # Filter logs by date range if provided
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    
+    filtered_logs = logs
+    
+    if start_date:
+        start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+        filtered_logs = [log for log in filtered_logs if datetime.fromisoformat(log['timestamp'].replace('Z', '+00:00')) >= start]
+        
+    if end_date:
+        end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+        filtered_logs = [log for log in filtered_logs if datetime.fromisoformat(log['timestamp'].replace('Z', '+00:00')) <= end]
+    
+    for log in filtered_logs:
+        writer.writerow([
+            log.get('timestamp', ''),
+            log.get('count', 0),
+            log.get('status', '')
+        ])
+    
+    # Create Flask response
+    output.seek(0)
+    return send_file(
+        io.BytesIO(output.getvalue().encode()),
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=f'person_counter_logs_{datetime.now().strftime("%Y%m%d_%H%M%S")}.csv'
+    )
+
+@app.route('/get_all_logs')
+def get_all_logs():
+    start_date = request.args.get('start_date')
+    end_date = request.args.get('end_date')
+    
+    filtered_logs = logs
+    
+    if start_date:
+        try:
+            start = datetime.fromisoformat(start_date.replace('Z', '+00:00'))
+            filtered_logs = [log for log in filtered_logs if datetime.fromisoformat(log['timestamp'].replace('Z', '+00:00')) >= start]
+        except ValueError:
+            pass
+        
+    if end_date:
+        try:
+            end = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            filtered_logs = [log for log in filtered_logs if datetime.fromisoformat(log['timestamp'].replace('Z', '+00:00')) <= end]
+        except ValueError:
+            pass
+    
+    return jsonify(filtered_logs)
+
+@app.route('/get_all_errors')
+def get_all_errors():
+    return jsonify(errors)
+
+@socketio.on('clear_errors')
+def handle_clear_errors():
+    global errors
+    errors = []
+    log_message("All errors cleared")
+
+@socketio.on('resolve_error')
+def handle_resolve_error(data):
+    global errors
+    error_id = data.get('id')
+    if error_id:
+        errors = [error for error in errors if error['id'] != error_id]
+        log_message(f"Error {error_id} resolved")
 
 if __name__ == '__main__':
-    # Use eventlet's WSGI server instead of Flask's default
-    socketio.run(app, 
-                debug=True, 
-                host='0.0.0.0', 
-                port=5000,
-                use_reloader=False)  # Disable reloader to prevent camera issues
+    socketio.run(app, debug=True, host='0.0.0.0')

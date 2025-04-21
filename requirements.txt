@@ -2,3 +2,7 @@ opencv-python
 numpy
 imutils
 picamera2
+flask
+flask-socketio
+eventlet
+python-dateutil

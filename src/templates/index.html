@@ -1,123 +1,1113 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Person Counter</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <link href="https://cdn.jsdelivr.net/npm/chart.js@4.0.0/dist/Chart.min.css" rel="stylesheet">
     <style>
-        .video-container { position: relative; }
-        .video-container.maximized { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 1000; }
-        .log-container { height: 200px; overflow-y: auto; }
+        :root {
+            --sidebar-width: 280px;
+            --primary-color: #3498db;
+            --error-color: #e74c3c;
+            --success-color: #2ecc71;
+            --warning-color: #f39c12;
+        }
+        
+        body {
+            min-height: 100vh;
+            overflow-x: hidden;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        /* Sidebar styles */
+        .sidebar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: var(--sidebar-width);
+            height: 100vh;
+            background-color: #2c3e50;
+            color: #ecf0f1;
+            transition: all 0.3s;
+            z-index: 1000;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .sidebar .sidebar-header {
+            padding: 20px;
+            background-color: #1a252f;
+        }
+        
+        .sidebar ul {
+            padding: 0;
+            list-style: none;
+        }
+        
+        .sidebar ul li a {
+            padding: 15px 20px;
+            display: flex;
+            align-items: center;
+            color: #ecf0f1;
+            text-decoration: none;
+            transition: all 0.3s;
+            border-left: 3px solid transparent;
+        }
+        
+        .sidebar ul li a:hover,
+        .sidebar ul li a.active {
+            background-color: #34495e;
+            border-left: 3px solid var(--primary-color);
+        }
+        
+        .sidebar ul li a i {
+            margin-right: 10px;
+        }
+        
+        .sidebar .notification-badge {
+            background-color: var(--error-color);
+            color: white;
+            border-radius: 50%;
+            padding: 0.25rem 0.5rem;
+            font-size: 0.75rem;
+            margin-left: auto;
+        }
+        
+        /* Content styles */
+        .content {
+            margin-left: var(--sidebar-width);
+            padding: 20px;
+            transition: all 0.3s;
+            width: calc(100% - var(--sidebar-width));
+        }
+        
+        /* Status indicators */
+        .status-indicator {
+            padding: 5px 10px;
+            border-radius: 20px;
+            color: white;
+            font-weight: bold;
+            display: inline-block;
+            font-size: 0.8rem;
+        }
+        
+        .status-active {
+            background-color: var(--success-color);
+        }
+        
+        .status-error {
+            background-color: var(--error-color);
+        }
+        
+        .status-warning {
+            background-color: var(--warning-color);
+        }
+        
+        /* Video container */
+        .video-container {
+            position: relative;
+            border-radius: 10px;
+            overflow: hidden;
+            background-color: #000;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        
+        .video-container.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 2000;
+            margin: 0;
+            border-radius: 0;
+        }
+        
+        .video-container video,
+        .video-container img {
+            width: 100%;
+            height: auto;
+            max-height: 70vh;
+            object-fit: contain;
+        }
+        
+        .video-container.fullscreen video,
+        .video-container.fullscreen img {
+            max-height: 100vh;
+        }
+        
+        .counter-overlay {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 15px;
+            border-radius: 30px;
+            font-weight: bold;
+            font-size: 1.2rem;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+        
+        .video-controls {
+            position: absolute;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        
+        .video-controls button {
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            border: none;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .video-controls button:hover {
+            background-color: var(--primary-color);
+        }
+        
+        /* Dashboard styles */
+        .count-display {
+            font-size: 5rem;
+            font-weight: bold;
+            color: #2c3e50;
+            text-align: center;
+            margin: 1rem 0;
+            line-height: 1;
+        }
+        
+        .count-label {
+            text-align: center;
+            color: #7f8c8d;
+            font-size: 1.2rem;
+            margin-bottom: 2rem;
+        }
+        
+        /* Config page styles */
+        .config-section {
+            margin-bottom: 2rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .tooltip-icon {
+            color: #7f8c8d;
+            margin-left: 5px;
+            cursor: help;
+        }
+        
+        /* Logs table */
+        .logs-table {
+            border-collapse: separate;
+            border-spacing: 0;
+            width: 100%;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.1);
+        }
+        
+        .logs-table thead th {
+            background-color: #34495e;
+            color: white;
+            padding: 12px 15px;
+            font-weight: 500;
+        }
+        
+        .logs-table tbody tr:nth-child(odd) {
+            background-color: #f9f9f9;
+        }
+        
+        .logs-table tbody tr:hover {
+            background-color: rgba(52, 152, 219, 0.1);
+        }
+        
+        .logs-table td {
+            padding: 12px 15px;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .error-row {
+            background-color: rgba(231, 76, 60, 0.1) !important;
+        }
+        
+        /* Error list */
+        .error-item {
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 15px;
+            overflow: hidden;
+            border-left: 4px solid var(--error-color);
+            transition: all 0.3s;
+        }
+        
+        .error-header {
+            padding: 15px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .error-timestamp {
+            color: #7f8c8d;
+            font-size: 0.85rem;
+        }
+        
+        .error-details {
+            padding: 0 15px;
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.3s ease;
+            background-color: #f9f9f9;
+        }
+        
+        .error-details.expanded {
+            max-height: 200px;
+            padding: 15px;
+        }
+        
+        /* Animation effects */
+        .fade-in {
+            animation: fadeIn 0.5s;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+        
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 70px;
+                text-align: center;
+            }
+            
+            .sidebar .sidebar-header h3 {
+                display: none;
+            }
+            
+            .sidebar ul li a span {
+                display: none;
+            }
+            
+            .sidebar ul li a i {
+                margin: 0;
+                font-size: 1.5rem;
+            }
+            
+            .content {
+                margin-left: 70px;
+                width: calc(100% - 70px);
+            }
+        }
+        
+        .page {
+            display: none;
+        }
+        
+        .page.active {
+            display: block;
+            animation: fadeIn 0.5s;
+        }
     </style>
 </head>
+
 <body>
-    <div class="container-fluid">
-        <div class="row">
-            <!-- Left Column -->
-            <div class="col-md-8">
-                <div class="card mb-3">
-                    <div class="card-header">
-                        Live Feed
-                        <div class="float-end">
-                            <button id="trackingBtn" class="btn btn-primary">Start Tracking</button>
-                            <button id="maximizeBtn" class="btn btn-secondary">Maximize</button>
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h3>Person Counter</h3>
+        </div>
+        <ul>
+            <li>
+                <a href="#" class="nav-link active" data-page="live-feed">
+                    <i class="bi bi-camera-video"></i>
+                    <span>Live Camera Feed</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-page="dashboard">
+                    <i class="bi bi-speedometer2"></i>
+                    <span>Counter Dashboard</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-page="config">
+                    <i class="bi bi-gear"></i>
+                    <span>System Configuration</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-page="logs">
+                    <i class="bi bi-clipboard-data"></i>
+                    <span>Logs & Reports</span>
+                </a>
+            </li>
+            <li>
+                <a href="#" class="nav-link" data-page="errors">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <span>Error Notifications</span>
+                    <span id="errorBadge" class="notification-badge">0</span>
+                </a>
+            </li>
+        </ul>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+        <!-- Page 1: Live Camera Feed -->
+        <div id="live-feed" class="page active">
+            <h2 class="mb-4">Live Camera Feed</h2>
+            <div class="video-container">
+                <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Live Camera Feed">
+                <div class="counter-overlay">
+                    <i class="bi bi-people-fill"></i>
+                    <span id="liveCount">0</span>
+                </div>
+                <div class="video-controls">
+                    <button id="pauseButton" title="Pause/Resume">
+                        <i class="bi bi-pause-fill"></i>
+                    </button>
+                    <button id="fullscreenButton" title="Fullscreen">
+                        <i class="bi bi-fullscreen"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">
+                    <h5>Camera Controls</h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-flex justify-content-between">
+                        <button id="trackingBtn" class="btn btn-primary">
+                            <i class="bi bi-play-fill"></i> Start Detection
+                        </button>
+                        <select id="cameraSelect" class="form-select ms-2" style="max-width: 200px;">
+                            <option value="0">Internal Camera</option>
+                            <option value="1">External Camera</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page 2: Counter Dashboard -->
+        <div id="dashboard" class="page">
+            <h2 class="mb-4">Counter Dashboard</h2>
+            <div class="row">
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body text-center">
+                            <h5 class="card-title text-muted">CURRENT COUNT</h5>
+                            <div class="count-display" id="currentCountDisplay">0</div>
+                            <div class="mt-3">
+                                <span id="systemStatus" class="status-indicator status-active">
+                                    <i class="bi bi-check-circle"></i> Active
+                                </span>
+                            </div>
+                            <button id="refreshStats" class="btn btn-outline-primary mt-3">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
                         </div>
                     </div>
-                    <div class="card-body video-container">
-                        <img id="videoFeed" src="{{ url_for('video_feed') }}" class="w-100" style="max-height: 600px; object-fit: contain;">
+                </div>
+                <div class="col-md-6 mb-4">
+                    <div class="card h-100">
+                        <div class="card-body">
+                            <h5 class="card-title">Statistics</h5>
+                            <div class="row text-center">
+                                <div class="col-4">
+                                    <div class="h3" id="avgCount">0</div>
+                                    <div class="small text-muted">Average</div>
+                                </div>
+                                <div class="col-4">
+                                    <div class="h3" id="minCount">0</div>
+                                    <div class="small text-muted">Minimum</div>
+                                </div>
+                                <div class="col-4">
+                                    <div class="h3" id="maxCount">0</div>
+                                    <div class="small text-muted">Maximum</div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>
             
-            <!-- Right Column -->
-            <div class="col-md-4">
-                <!-- Dashboard -->
-                <div class="card mb-3">
-                    <div class="card-header">Dashboard</div>
-                    <div class="card-body">
-                        <p>Current Count: <span id="currentCount">0</span></p>
-                        <p>Average Attendance: <span id="avgAttendance">0</span></p>
-                        <p>Minimum Attendance: <span id="minAttendance">0</span></p>
-                        <p>Peak Occupancy: <span id="peakOccupancy">0</span></p>
-                    </div>
+            <div class="card">
+                <div class="card-header">
+                    <h5>Count History (Last 10 minutes)</h5>
                 </div>
-                
-                <!-- Settings -->
-                <div class="card mb-3">
-                    <div class="card-header">Settings</div>
-                    <div class="card-body">
-                        <h6>Camera Settings</h6>
-                        <select id="cameraSelect" class="form-select mb-2">
-                            <option value="0">Internal Camera</option>
-                            <option value="1">External Camera</option>
-                        </select>
-                        <button id="testCamera" class="btn btn-secondary mb-3">Test Camera</button>
+                <div class="card-body">
+                    <canvas id="countChart" height="300"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page 3: System Configuration -->
+        <div id="config" class="page">
+            <h2 class="mb-4">System Configuration</h2>
+            <div class="card mb-4">
+                <div class="card-body">
+                    <form id="configForm">
+                        <div class="config-section">
+                            <h5>Camera Settings</h5>
+                            <div class="mb-3">
+                                <label for="configCameraSelect" class="form-label">Camera Source</label>
+                                <div class="d-flex gap-2">
+                                    <select id="configCameraSelect" class="form-select">
+                                        <option value="0">Internal Camera</option>
+                                        <option value="1">External Camera</option>
+                                        <option value="2">USB Camera</option>
+                                    </select>
+                                    <button type="button" id="testCameraBtn" class="btn btn-secondary">
+                                        Test Camera
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                         
-                        <h6>Detection Settings</h6>
-                        <select id="sensitivitySelect" class="form-select">
-                            <option>Low</option>
-                            <option selected>Medium</option>
-                            <option>High</option>
-                        </select>
+                        <div class="config-section">
+                            <h5>Detection Settings</h5>
+                            <div class="mb-3">
+                                <label for="sensitivityRange" class="form-label">
+                                    Detection Sensitivity
+                                    <i class="bi bi-question-circle tooltip-icon" data-bs-toggle="tooltip" 
+                                       title="Higher sensitivity may detect more people but could increase false positives"></i>
+                                </label>
+                                <div class="d-flex align-items-center">
+                                    <span class="me-2">Low</span>
+                                    <input type="range" class="form-range flex-grow-1" id="sensitivityRange" min="1" max="3" step="1" value="2">
+                                    <span class="ms-2">High</span>
+                                </div>
+                                <div class="text-center mt-1">
+                                    <span id="sensitivityLabel" class="badge bg-primary">Medium</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="config-section">
+                            <h5>Logging Preferences</h5>
+                            <div class="mb-3">
+                                <div class="form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="enableLogging" checked>
+                                    <label class="form-check-label" for="enableLogging">Enable Logging</label>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label for="logFrequency" class="form-label">Log Frequency</label>
+                                <select id="logFrequency" class="form-select">
+                                    <option value="30">Every 30 seconds</option>
+                                    <option value="60" selected>Every minute</option>
+                                    <option value="300">Every 5 minutes</option>
+                                    <option value="600">Every 10 minutes</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <div class="d-flex justify-content-end mt-4">
+                            <button type="button" id="cancelConfigBtn" class="btn btn-secondary me-2">Cancel</button>
+                            <button type="submit" id="saveConfigBtn" class="btn btn-primary">Save Changes</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- Page 4: Logs and Reports -->
+        <div id="logs" class="page">
+            <h2 class="mb-4">Logs & Reports</h2>
+            <div class="card mb-4">
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-center mb-4">
+                        <div class="input-group" style="max-width: 300px;">
+                            <input type="text" id="logSearch" class="form-control" placeholder="Search logs...">
+                            <button class="btn btn-outline-secondary" type="button">
+                                <i class="bi bi-search"></i>
+                            </button>
+                        </div>
+                        <div class="d-flex gap-2 align-items-center">
+                            <div class="input-group" style="max-width: 450px;">
+                                <input type="date" id="startDate" class="form-control">
+                                <span class="input-group-text">to</span>
+                                <input type="date" id="endDate" class="form-control">
+                                <button class="btn btn-outline-secondary" type="button">Filter</button>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="table-responsive">
+                        <table id="logsTable" class="logs-table">
+                            <thead>
+                                <tr>
+                                    <th>Timestamp</th>
+                                    <th>Count</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="logsTableBody">
+                                <!-- Log entries will be populated dynamically -->
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <div class="d-flex justify-content-between align-items-center mt-4">
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-primary" id="exportCSV">
+                                <i class="bi bi-file-earmark-spreadsheet"></i> Export CSV
+                            </button>
+                            <button class="btn btn-outline-primary" id="exportPDF">
+                                <i class="bi bi-file-earmark-pdf"></i> Export PDF
+                            </button>
+                        </div>
+                        <nav aria-label="Log pagination">
+                            <ul class="pagination mb-0">
+                                <li class="page-item disabled">
+                                    <a class="page-link" href="#" aria-label="Previous">
+                                        <span aria-hidden="true">&laquo;</span>
+                                    </a>
+                                </li>
+                                <li class="page-item active"><a class="page-link" href="#">1</a></li>
+                                <li class="page-item"><a class="page-link" href="#">2</a></li>
+                                <li class="page-item"><a class="page-link" href="#">3</a></li>
+                                <li class="page-item">
+                                    <a class="page-link" href="#" aria-label="Next">
+                                        <span aria-hidden="true">&raquo;</span>
+                                    </a>
+                                </li>
+                            </ul>
+                        </nav>
                     </div>
                 </div>
-                
-                <!-- Logs -->
-                <div class="card">
-                    <div class="card-header">System Logs</div>
-                    <div class="card-body log-container" id="logs">
+            </div>
+        </div>
+
+        <!-- Page 5: Error Notifications -->
+        <div id="errors" class="page">
+            <h2 class="mb-4">Error Notifications</h2>
+            <div class="card">
+                <div class="card-body">
+                    <div class="d-flex justify-content-end mb-3">
+                        <button id="clearErrorsBtn" class="btn btn-outline-danger">
+                            <i class="bi bi-trash"></i> Clear Resolved Errors
+                        </button>
+                    </div>
+                    
+                    <div id="errorsList">
+                        <!-- Error items will be populated dynamically -->
                     </div>
                 </div>
             </div>
         </div>
     </div>
-    
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.0.0/dist/chart.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script>
-        const socket = io();
-        let tracking = false;
-        
         // Connect to WebSocket
+        const socket = io();
+        
+        // Global variables
+        let tracking = false;
+        let isPaused = false;
+        let chartInstance = null;
+        let countData = {
+            timestamps: [],
+            counts: []
+        };
+        let systemErrors = [];
+        
+        // DOM Elements
+        const videoFeed = document.getElementById('videoFeed');
+        const pauseButton = document.getElementById('pauseButton');
+        const fullscreenButton = document.getElementById('fullscreenButton');
+        const trackingBtn = document.getElementById('trackingBtn');
+        const refreshStats = document.getElementById('refreshStats');
+        const sensitivityRange = document.getElementById('sensitivityRange');
+        const sensitivityLabel = document.getElementById('sensitivityLabel');
+        const cameraSelect = document.getElementById('cameraSelect');
+        const configCameraSelect = document.getElementById('configCameraSelect');
+        const saveConfigBtn = document.getElementById('saveConfigBtn');
+        const cancelConfigBtn = document.getElementById('cancelConfigBtn');
+        const testCameraBtn = document.getElementById('testCameraBtn');
+        const enableLogging = document.getElementById('enableLogging');
+        const logFrequency = document.getElementById('logFrequency');
+        const exportCSV = document.getElementById('exportCSV');
+        const exportPDF = document.getElementById('exportPDF');
+        const clearErrorsBtn = document.getElementById('clearErrorsBtn');
+        const errorBadge = document.getElementById('errorBadge');
+        
+        // Initialize tooltips
+        const tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'));
+        const tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+            return new bootstrap.Tooltip(tooltipTriggerEl);
+        });
+        
+        // Navigation
+        document.querySelectorAll('.nav-link').forEach(link => {
+            link.addEventListener('click', function(e) {
+                e.preventDefault();
+                
+                // Remove active class from all links and pages
+                document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+                document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+                
+                // Add active class to clicked link
+                this.classList.add('active');
+                
+                // Show corresponding page
+                const pageId = this.getAttribute('data-page');
+                document.getElementById(pageId).classList.add('active');
+            });
+        });
+        
+        // Initialize Chart
+        function initChart() {
+            const ctx = document.getElementById('countChart').getContext('2d');
+            
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Person Count',
+                        data: [],
+                        borderColor: '#3498db',
+                        backgroundColor: 'rgba(52, 152, 219, 0.1)',
+                        borderWidth: 2,
+                        tension: 0.3,
+                        fill: true
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            ticks: {
+                                precision: 0
+                            }
+                        }
+                    },
+                    animation: {
+                        duration: 500
+                    }
+                }
+            });
+        }
+        
+        // Update chart with new data
+        function updateChart(timestamp, count) {
+            // Keep only the last 30 data points (10 minutes if logging every 20 seconds)
+            if (countData.timestamps.length > 30) {
+                countData.timestamps.shift();
+                countData.counts.shift();
+            }
+            
+            countData.timestamps.push(timestamp);
+            countData.counts.push(count);
+            
+            if (chartInstance) {
+                chartInstance.data.labels = countData.timestamps.map(ts => 
+                    new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                );
+                chartInstance.data.datasets[0].data = countData.counts;
+                chartInstance.update();
+            }
+        }
+        
+        // Add log entry
+        function addLogEntry(timestamp, count, status) {
+            const tbody = document.getElementById('logsTableBody');
+            const row = document.createElement('tr');
+            
+            if (status === 'Error') {
+                row.classList.add('error-row');
+            }
+            
+            row.innerHTML = `
+                <td>${new Date(timestamp).toLocaleString()}</td>
+                <td>${count}</td>
+                <td>
+                    <span class="status-indicator status-${status.toLowerCase()}">${status}</span>
+                </td>
+            `;
+            
+            // Insert at the beginning
+            if (tbody.firstChild) {
+                tbody.insertBefore(row, tbody.firstChild);
+            } else {
+                tbody.appendChild(row);
+            }
+            
+            // Keep only the latest 100 logs in DOM for performance
+            if (tbody.children.length > 100) {
+                tbody.removeChild(tbody.lastChild);
+            }
+        }
+        
+        // Add error notification
+        function addError(errorId, message, timestamp, details) {
+            // Check if error already exists
+            if (document.getElementById(`error-${errorId}`)) {
+                return;
+            }
+            
+            const errorItem = document.createElement('div');
+            errorItem.id = `error-${errorId}`;
+            errorItem.className = 'error-item';
+            
+            errorItem.innerHTML = `
+                <div class="error-header" onclick="toggleErrorDetails('${errorId}')">
+                    <div>
+                        <i class="bi bi-exclamation-circle text-danger"></i>
+                        <strong>${message}</strong>
+                    </div>
+                    <div class="error-timestamp">${new Date(timestamp).toLocaleString()}</div>
+                </div>
+                <div id="error-details-${errorId}" class="error-details">
+                    <p>${details}</p>
+                    <div class="d-flex justify-content-end">
+                        <button onclick="resolveError('${errorId}')" class="btn btn-sm btn-outline-success">
+                            Mark as Resolved
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('errorsList').prepend(errorItem);
+            systemErrors.push({ id: errorId, message, timestamp, details });
+            updateErrorBadge();
+        }
+        
+        // Toggle error details
+        window.toggleErrorDetails = function(errorId) {
+            const detailsElement = document.getElementById(`error-details-${errorId}`);
+            detailsElement.classList.toggle('expanded');
+        };
+        
+        // Resolve error
+        window.resolveError = function(errorId) {
+            const errorElement = document.getElementById(`error-${errorId}`);
+            if (errorElement) {
+                errorElement.remove();
+                systemErrors = systemErrors.filter(error => error.id !== errorId);
+                updateErrorBadge();
+            }
+        };
+        
+        // Update error badge count
+        function updateErrorBadge() {
+            errorBadge.textContent = systemErrors.length;
+            if (systemErrors.length === 0) {
+                errorBadge.style.display = 'none';
+            } else {
+                errorBadge.style.display = 'inline-block';
+            }
+        }
+        
+        // Socket.io event handlers
         socket.on('connect', () => {
             console.log('Connected to server');
+            updateSystemStatus('Active');
         });
         
-        // Handle tracking button
-        document.getElementById('trackingBtn').onclick = () => {
+        socket.on('disconnect', () => {
+            console.log('Disconnected from server');
+            updateSystemStatus('Error');
+            addError('connection-lost', 'Connection lost', new Date().toISOString(), 
+                    'Connection to the server has been lost. Please refresh the page or check your network connection.');
+        });
+        
+        socket.on('stats_update', (stats) => {
+            updateCountDisplay(stats.current_count);
+            
+            document.getElementById('avgCount').textContent = stats.average.toFixed(1);
+            document.getElementById('minCount').textContent = stats.minimum;
+            document.getElementById('maxCount').textContent = stats.peak;
+            
+            // Add to chart
+            updateChart(new Date().toISOString(), stats.current_count);
+            
+            // Add to logs if logging is enabled
+            if (enableLogging.checked) {
+                addLogEntry(new Date().toISOString(), stats.current_count, 'Active');
+            }
+        });
+        
+        socket.on('system_status', (status) => {
+            updateSystemStatus(status.state);
+            
+            if (status.state === 'Error') {
+                addError('system-error', status.message, new Date().toISOString(), status.details || 'No additional details available.');
+            }
+        });
+        
+        // Update count displays
+        function updateCountDisplay(count) {
+            document.getElementById('liveCount').textContent = count;
+            document.getElementById('currentCountDisplay').textContent = count;
+        }
+        
+        // Update system status indicator
+        function updateSystemStatus(status) {
+            const statusElement = document.getElementById('systemStatus');
+            
+            statusElement.className = 'status-indicator';
+            
+            switch (status) {
+                case 'Active':
+                    statusElement.classList.add('status-active');
+                    statusElement.innerHTML = '<i class="bi bi-check-circle"></i> Active';
+                    break;
+                case 'Error':
+                    statusElement.classList.add('status-error');
+                    statusElement.innerHTML = '<i class="bi bi-x-circle"></i> Error';
+                    break;
+                case 'Warning':
+                    statusElement.classList.add('status-warning');
+                    statusElement.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Warning';
+                    break;
+            }
+        }
+        
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            initChart();
+            updateErrorBadge();
+            
+            // Set current date for date pickers
+            const today = new Date().toISOString().split('T')[0];
+            document.getElementById('startDate').value = today;
+            document.getElementById('endDate').value = today;
+        });
+        
+        trackingBtn.addEventListener('click', () => {
             tracking = !tracking;
             socket.emit('toggle_tracking', { tracking });
-            document.getElementById('trackingBtn').textContent = 
-                tracking ? 'Stop Tracking' : 'Start Tracking';
-        };
+            trackingBtn.innerHTML = tracking ? 
+                '<i class="bi bi-stop-fill"></i> Stop Detection' : 
+                '<i class="bi bi-play-fill"></i> Start Detection';
+            
+            // Also update the config camera select to match
+            configCameraSelect.value = cameraSelect.value;
+        });
         
-        // Handle maximize button
-        document.getElementById('maximizeBtn').onclick = () => {
-            document.querySelector('.video-container').classList.toggle('maximized');
-        };
+        pauseButton.addEventListener('click', () => {
+            isPaused = !isPaused;
+            
+            if (isPaused) {
+                pauseButton.innerHTML = '<i class="bi bi-play-fill"></i>';
+                videoFeed.style.opacity = '0.7';
+            } else {
+                pauseButton.innerHTML = '<i class="bi bi-pause-fill"></i>';
+                videoFeed.style.opacity = '1';
+            }
+            
+            socket.emit('pause_video', { paused: isPaused });
+        });
         
-        // Handle camera selection
-        document.getElementById('cameraSelect').onchange = (e) => {
+        fullscreenButton.addEventListener('click', () => {
+            const videoContainer = document.querySelector('.video-container');
+            videoContainer.classList.toggle('fullscreen');
+            
+            if (videoContainer.classList.contains('fullscreen')) {
+                fullscreenButton.innerHTML = '<i class="bi bi-fullscreen-exit"></i>';
+            } else {
+                fullscreenButton.innerHTML = '<i class="bi bi-fullscreen"></i>';
+            }
+        });
+        
+        refreshStats.addEventListener('click', () => {
+            socket.emit('refresh_stats');
+        });
+        
+        // Camera selection
+        cameraSelect.addEventListener('change', (e) => {
             socket.emit('change_camera', { camera: e.target.value });
-        };
-        
-        // Handle sensitivity selection
-        document.getElementById('sensitivitySelect').onchange = (e) => {
-            socket.emit('change_sensitivity', { level: e.target.value });
-        };
-        
-        // Update statistics
-        socket.on('stats_update', (stats) => {
-            document.getElementById('currentCount').textContent = stats.current_count;
-            document.getElementById('avgAttendance').textContent = stats.average.toFixed(1);
-            document.getElementById('minAttendance').textContent = stats.minimum;
-            document.getElementById('peakOccupancy').textContent = stats.peak;
+            // Also update the config camera select to match
+            configCameraSelect.value = e.target.value;
         });
         
-        // Update logs
-        socket.on('log_update', (log) => {
-            const logDiv = document.getElementById('logs');
-            logDiv.innerHTML += `<p><small>${log.timestamp}</small><br>${log.message}</p>`;
-            logDiv.scrollTop = logDiv.scrollHeight;
+        // Config page
+        configCameraSelect.addEventListener('change', (e) => {
+            // Update the main camera select to match
+            cameraSelect.value = e.target.value;
         });
+        
+        sensitivityRange.addEventListener('input', (e) => {
+            const value = parseInt(e.target.value);
+            let label;
+            
+            switch (value) {
+                case 1:
+                    label = 'Low';
+                    break;
+                case 2:
+                    label = 'Medium';
+                    break;
+                case 3:
+                    label = 'High';
+                    break;
+            }
+            
+            sensitivityLabel.textContent = label;
+        });
+        
+        saveConfigBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            
+            const config = {
+                camera: configCameraSelect.value,
+                sensitivity: sensitivityLabel.textContent,
+                logging: {
+                    enabled: enableLogging.checked,
+                    frequency: parseInt(logFrequency.value)
+                }
+            };
+            
+            socket.emit('save_config', config);
+            
+            // Show success message
+            alert('Configuration saved successfully!');
+        });
+        
+        testCameraBtn.addEventListener('click', () => {
+            socket.emit('test_camera', { camera: configCameraSelect.value });
+            alert('Testing camera...');
+        });
+        
+        // Export functions
+        exportCSV.addEventListener('click', () => {
+            // In a real app, this would call a server endpoint to generate CSV
+            alert('Exporting logs as CSV...');
+        });
+        
+        exportPDF.addEventListener('click', () => {
+            // In a real app, this would call a server endpoint to generate PDF
+            alert('Exporting logs as PDF...');
+        });
+        
+        // Clear errors
+        clearErrorsBtn.addEventListener('click', () => {
+            systemErrors = [];
+            document.getElementById('errorsList').innerHTML = '';
+            updateErrorBadge();
+        });
+        
+        // Local storage handlers
+        function saveToLocalStorage() {
+            const appData = {
+                countData,
+                logs: Array.from(document.getElementById('logsTableBody').children).map(row => ({
+                    timestamp: row.cells[0].textContent,
+                    count: parseInt(row.cells[1].textContent),
+                    status: row.cells[2].textContent.trim()
+                })),
+                errors: systemErrors,
+                config: {
+                    camera: configCameraSelect.value,
+                    sensitivity: sensitivityLabel.textContent,
+                    logging: {
+                        enabled: enableLogging.checked,
+                        frequency: parseInt(logFrequency.value)
+                    }
+                }
+            };
+            
+            localStorage.setItem('personCounterData', JSON.stringify(appData));
+        }
+        
+        function loadFromLocalStorage() {
+            const dataString = localStorage.getItem('personCounterData');
+            if (!dataString) return;
+            
+            try {
+                const appData = JSON.parse(dataString);
+                
+                // Restore count data and update chart
+                if (appData.countData && appData.countData.timestamps && appData.countData.counts) {
+                    countData = appData.countData;
+                    
+                    if (chartInstance) {
+                        chartInstance.data.labels = countData.timestamps.map(ts => 
+                            new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+                        );
+                        chartInstance.data.datasets[0].data = countData.counts;
+                        chartInstance.update();
+                    }
+                }
+                
+                // Restore logs
+                if (appData.logs && Array.isArray(appData.logs)) {
+                    const tbody = document.getElementById('logsTableBody');
+                    tbody.innerHTML = '';
+                    
+                    appData.logs.forEach(log => {
+                        addLogEntry(log.timestamp, log.count, log.status);
+                    });
+                }
+                
+                // Restore errors
+                if (appData.errors && Array.isArray(appData.errors)) {
+                    systemErrors = appData.errors;
+                    
+                    systemErrors.forEach(error => {
+                        addError(error.id, error.message, error.timestamp, error.details);
+                    });
+                    
+                    updateErrorBadge();
+                }
+                
+                // Restore config
+                if (appData.config) {
+                    configCameraSelect.value = appData.config.camera || '0';
+                    cameraSelect.value = appData.config.camera || '0';
+                    
+                    const sensitivityValue = appData.config.sensitivity === 'Low' ? 1 :
+                                          appData.config.sensitivity === 'High' ? 3 : 2;
+                    sensitivityRange.value = sensitivityValue;
+                    sensitivityLabel.textContent = appData.config.sensitivity || 'Medium';
+                    
+                    if (appData.config.logging) {
+                        enableLogging.checked = appData.config.logging.enabled;
+                        logFrequency.value = appData.config.logging.frequency || '60';
+                    }
+                }
+            } catch (err) {
+                console.error('Error loading data from local storage:', err);
+            }
+        }
+        
+        // Save data to localStorage periodically and when window is closed
+        window.addEventListener('beforeunload', saveToLocalStorage);
+        setInterval(saveToLocalStorage, 30000); // Every 30 seconds
+        
+        // Load saved data on page load
+        loadFromLocalStorage();
     </script>
 </body>
 </html>
