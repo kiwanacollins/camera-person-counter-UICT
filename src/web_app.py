@@ -84,6 +84,18 @@ def index():
 @app.route('/dashboard')
 def dashboard():
     return render_template('dashboard.html')
+    
+@app.route('/config')
+def config():
+    return render_template('config.html')
+    
+@app.route('/logs')
+def logs_page():
+    return render_template('logs.html')
+    
+@app.route('/errors')
+def errors():
+    return render_template('errors.html')
 
 def generate_frames():
     while True:
@@ -118,6 +130,115 @@ def handle_sensitivity(data):
     global sensitivity
     sensitivity = data['level']
     log_message(f"Detection sensitivity set to {sensitivity}")
+
+# System Configuration handlers
+@socketio.on('update_config')
+def handle_config_update(config):
+    global sensitivity, current_camera
+    try:
+        # Update camera settings
+        camera_id = int(config['camera']['id'])
+        if camera_id != current_camera:
+            current_camera = camera_id
+            global video_stream
+            if video_stream:
+                del video_stream
+            video_stream = VideoCamera()
+            
+        # Update detection settings
+        if 'detection' in config:
+            sensitivity_map = {
+                "1": "Low", 
+                "2": "Medium", 
+                "3": "High"
+            }
+            if 'sensitivity' in config['detection'] and str(config['detection']['sensitivity']) in sensitivity_map:
+                sensitivity = sensitivity_map[str(config['detection']['sensitivity'])]
+        
+        # Log the configuration update
+        log_message(f"System configuration updated")
+        return {'success': True, 'message': 'Configuration updated successfully'}
+    except Exception as e:
+        log_message(f"Error updating configuration: {str(e)}")
+        return {'success': False, 'message': f'Error: {str(e)}'}
+
+@socketio.on('test_camera')
+def handle_test_camera(data):
+    try:
+        camera_id = int(data['camera'])
+        # In a real implementation, you might want to create a temporary camera 
+        # to test without disrupting the main video stream
+        log_message(f"Testing camera {camera_id}")
+        return {'success': True}
+    except Exception as e:
+        log_message(f"Error testing camera: {str(e)}")
+        return {'success': False, 'message': f'Error: {str(e)}'}
+
+# Logs and Reports handlers
+@socketio.on('get_logs')
+def handle_get_logs(data):
+    try:
+        # In a real implementation, you might want to filter logs based on data parameters
+        # For now, we'll just return all logs
+        log_data = []
+        for i, log in enumerate(logs):
+            # Convert log entry to the format expected by the client
+            status = 'normal'
+            count = stats["current_count"] if i == len(logs) - 1 else 0
+            if "error" in log["message"].lower():
+                status = 'error'
+            elif "warn" in log["message"].lower():
+                status = 'warning'
+            
+            log_data.append({
+                'id': i + 1,
+                'timestamp': log["timestamp"],
+                'count': count,
+                'status': status,
+                'message': log["message"]
+            })
+        
+        return {'success': True, 'logs': log_data}
+    except Exception as e:
+        return {'success': False, 'message': f'Error: {str(e)}'}
+
+# Error Notification handlers
+@socketio.on('get_errors')
+def handle_get_errors(data):
+    try:
+        # Filter logs to find error entries
+        error_logs = []
+        for i, log in enumerate(logs):
+            if "error" in log["message"].lower():
+                severity = 'high'
+            elif "warn" in log["message"].lower():
+                severity = 'medium'
+            else:
+                continue  # Skip non-error/warning logs
+                
+            error_logs.append({
+                'id': i + 1,
+                'title': log["message"].split(":")[0] if ":" in log["message"] else "System Error",
+                'message': log["message"],
+                'timestamp': log["timestamp"],
+                'severity': severity,
+                'status': 'active'
+            })
+        
+        return {'success': True, 'errors': error_logs}
+    except Exception as e:
+        return {'success': False, 'message': f'Error: {str(e)}'}
+
+@socketio.on('fix_error')
+def handle_fix_error(data):
+    try:
+        error_id = data['errorId']
+        # In a real implementation, you would attempt to fix the error based on its type
+        log_message(f"Attempted to fix error #{error_id}")
+        return {'success': True, 'message': f'Error #{error_id} fix attempt completed'}
+    except Exception as e:
+        log_message(f"Error during fix attempt: {str(e)}")
+        return {'success': False, 'message': f'Error: {str(e)}'}
 
 def log_message(message):
     logs.append({
