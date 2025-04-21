@@ -51,3 +51,8 @@ camera-person-counter
 
 ## License
 This project is licensed under the MIT License. See the LICENSE file for more details.
+
+
+
+GET http://0.0.0.0:5000/video_feed 500 (INTERNAL SERVER ERROR)
+manager.js:112 WebSocket connection to 'ws://0.0.0.0:5000/socket.io/?EIO=4&transport=websocket&sid=2qR9xUew4cr9VtF2AABX' failed: WebSocket is closed before the connection is established.
