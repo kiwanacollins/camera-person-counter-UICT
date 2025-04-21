@@ -169,121 +169,164 @@ class VideoCamera:
         global system_status, last_log_time
         
         with self.lock:
-            # Check if we're using a mock camera
-            if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
-                # Create a mock frame with movement
-                frame = self.mock_frame.copy()
-                # Move the circle
-                self.circle_x += self.dx
-                self.circle_y += self.dy
-                # Bounce off edges
-                if self.circle_x <= 20 or self.circle_x >= frame_width-20:
-                    self.dx *= -1
-                if self.circle_y <= 20 or self.circle_y >= frame_height-20:
-                    self.dy *= -1
-                # Draw the moving circle
-                cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
-                success = True
-            else:
-                # Real camera - check status
-                try:
-                    # Make sure camera is still open
-                    if self.video is None or not self.video.isOpened():
-                        print("Camera is closed, attempting to reconnect...")
-                        self.connect_camera()
-                        if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
-                            # If we're now in mock camera mode, restart the function
+            try:
+                # Check if we're using a mock camera
+                if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
+                    # Create a mock frame with movement
+                    frame = self.mock_frame.copy()
+                    # Move the circle
+                    self.circle_x += self.dx
+                    self.circle_y += self.dy
+                    # Bounce off edges
+                    if self.circle_x <= 20 or self.circle_x >= frame_width-20:
+                        self.dx *= -1
+                    if self.circle_y <= 20 or self.circle_y >= frame_height-20:
+                        self.dy *= -1
+                    # Draw the moving circle
+                    cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
+                else:
+                    # Real camera - check status
+                    try:
+                        # Make sure camera is still open
+                        if self.video is None or not self.video.isOpened():
+                            print("Camera is closed, attempting to reconnect...")
+                            self.connect_camera()
+                            if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
+                                # If we're now in mock camera mode, restart the function
+                                return self.get_frame()
+                            
+                        # Read a frame from the camera
+                        success, frame = self.video.read()
+                        if not success or frame is None:
+                            print("Failed to read frame from camera")
+                            log_message("Error: Failed to read frame from camera", "error")
+                            system_status = "error"
+                            # Fall back to mock camera instead of returning None
+                            self.setup_mock_camera()
                             return self.get_frame()
-                        
-                    # Read a frame from the camera
-                    success, frame = self.video.read()
-                    if not success or frame is None:
-                        print("Failed to read frame from camera")
-                        log_message("Error: Failed to read frame from camera", "error")
+                    except Exception as e:
+                        print(f"Exception reading frame: {str(e)}")
+                        log_message(f"Error reading camera frame: {str(e)}", "error")
                         system_status = "error"
-                        # Fall back to mock camera instead of returning None
+                        # Fall back to mock camera
                         self.setup_mock_camera()
                         return self.get_frame()
-                except Exception as e:
-                    print(f"Exception reading frame: {str(e)}")
-                    log_message(f"Error reading camera frame: {str(e)}", "error")
-                    system_status = "error"
-                    # Fall back to mock camera
-                    self.setup_mock_camera()
-                    return self.get_frame()
 
-            start_time = datetime.now()
-            self.frame_count += 1
-            current_time = datetime.now()
+                # Process frame stats and tracking
+                self.process_frame_stats()
+                
+                if self.is_tracking:
+                    frame = self.process_tracking(frame)
+
+                # Encode the frame
+                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+                return jpeg.tobytes()
+                
+            except Exception as e:
+                print(f"Error in get_frame: {str(e)}")
+                return create_placeholder_frame("Error in frame processing")
+
+    def process_frame_stats(self):
+        """Process frame statistics including FPS calculation"""
+        current_time = datetime.now()
+        self.frame_count += 1
+        
+        # Calculate actual FPS every second
+        time_diff = (current_time - self.fps_start_time).total_seconds()
+        if time_diff >= 1.0:
+            self.actual_fps = self.frame_count / time_diff
+            stats["frame_rate"] = round(self.actual_fps, 1)
+            self.frame_count = 0
+            self.fps_start_time = current_time
             
-            # Calculate actual FPS every second
-            time_diff = (current_time - self.fps_start_time).total_seconds()
-            if time_diff >= 1.0:
-                self.actual_fps = self.frame_count / time_diff
-                stats["frame_rate"] = round(self.actual_fps, 1)
-                self.frame_count = 0
-                self.fps_start_time = current_time
-                
-                # Check if frame rate is too low (possible performance issue)
-                if self.actual_fps < (frame_rate * 0.7) and self.actual_fps > 0:
-                    log_message(f"Warning: Low frame rate detected ({self.actual_fps:.1f} FPS)", "warning")
-                    system_status = "warning"
+            # Check if frame rate is too low (possible performance issue)
+            if self.actual_fps < (frame_rate * 0.7) and self.actual_fps > 0:
+                log_message(f"Warning: Low frame rate detected ({self.actual_fps:.1f} FPS)", "warning")
+                system_status = "warning"
 
-            if self.is_tracking:
+        # Check for potential errors every 5 seconds
+        if (current_time - self.last_error_check).total_seconds() >= 5:
+            self.check_camera_errors()
+            self.last_error_check = current_time
+
+    def process_tracking(self, frame):
+        """Process object detection and tracking on the frame"""
+        global last_log_time
+        try:
+            with app.app_context():
+                # Measure detection time for performance monitoring
+                detect_start = datetime.now()
+                
+                # Call detect() and ensure we get a valid list back
                 try:
-                    with app.app_context():
-                        # Measure detection time for performance monitoring
-                        detect_start = datetime.now()
-                        detections = detector.detect(frame, confidence_threshold)
-                        # Make sure detections is actually a list before passing it to the counter
-                        if not isinstance(detections, list):
+                    detections = detector.detect(frame, confidence_threshold)
+                    if detections is None or callable(detections):
+                        print(f"Warning: detect() returned invalid type {type(detections)}")
+                        detections = []
+                    elif not isinstance(detections, list):
+                        try:
+                            # Try to convert to list if possible
+                            detections = list(detections)
+                        except:
+                            print(f"Warning: could not convert {type(detections)} to list")
                             detections = []
-                        count = counter.update(detections)
-                        frame = draw_results(frame, detections, count)
-                        detect_time = (datetime.now() - detect_start).total_seconds() * 1000  # in milliseconds
-                        stats["detection_time"] = round(detect_time, 1)
-                        
-                        # Update statistics
-                        stats["current_count"] = count
-                        if "total_counts" not in stats:
-                            stats["total_counts"] = []
-                        stats["total_counts"].append(count)
-                        stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"]) if len(stats["total_counts"]) > 0 else 0
-                        stats["minimum"] = min(stats["total_counts"]) if len(stats["total_counts"]) > 0 else 0
-                        stats["peak"] = max(stats["total_counts"]) if len(stats["total_counts"]) > 0 else 0
-                        
-                        # Add system load (CPU usage would go here in a real implementation)
-                        stats["system_load"] = min(90, stats["detection_time"] / 10)  # Simplified for demo
-                        
-                        # Log based on frequency settings if enabled
-                        if logging_enabled and (current_time - last_log_time).total_seconds() >= log_frequency:
-                            log_message(f"Current count: {count} people detected", "info")
-                            last_log_time = current_time
-                        
-                        socketio.emit('stats_update', stats)
                 except Exception as e:
-                    log_message(f"Error during detection: {str(e)}", "error")
-                    system_status = "error"
-
-            # Check for potential errors every 5 seconds
-            if (current_time - self.last_error_check).total_seconds() >= 5:
-                self.last_error_check = current_time
+                    print(f"Error calling detect(): {str(e)}")
+                    detections = []
                 
-                # Check if camera resolution is as expected
-                actual_width = self.video.get(cv2.CAP_PROP_FRAME_WIDTH)
-                actual_height = self.video.get(cv2.CAP_PROP_FRAME_HEIGHT)
-                if actual_width != frame_width or actual_height != frame_height:
-                    log_message(f"Warning: Camera resolution mismatch. Expected: {frame_width}x{frame_height}, Got: {actual_width}x{actual_height}", "warning")
-                    system_status = "warning"
+                # Update counter with detections
+                try:
+                    count = counter.update(detections)
+                except Exception as e:
+                    print(f"Error updating counter: {str(e)}")
+                    count = 0
                 
-                # Example of auto-recovery (this could be expanded in a real system)
-                if stats["system_load"] > 80:
-                    log_message("Warning: High system load detected", "warning")
-                    system_status = "warning"
+                # Draw results on frame
+                try:
+                    frame = draw_results(frame, detections, count)
+                except Exception as e:
+                    print(f"Error drawing results: {str(e)}")
+                
+                detect_time = (datetime.now() - detect_start).total_seconds() * 1000
+                self.update_stats(count, detect_time)
+                
+                # Log based on frequency settings if enabled
+                current_time = datetime.now()
+                if logging_enabled and (current_time - last_log_time).total_seconds() >= log_frequency:
+                    log_message(f"Current count: {count} people detected", "info")
+                    last_log_time = current_time
+                    
+        except Exception as e:
+            log_message(f"Error during detection: {str(e)}", "error")
+            system_status = "error"
+            
+        return frame
 
-            # Encode the frame
-            _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-            return jpeg.tobytes()
+    def update_stats(self, count, detect_time):
+        """Update detection and tracking statistics"""
+        stats["detection_time"] = round(detect_time, 1)
+        stats["current_count"] = count
+        if "total_counts" not in stats:
+            stats["total_counts"] = []
+        stats["total_counts"].append(count)
+        stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"])
+        stats["minimum"] = min(stats["total_counts"])
+        stats["peak"] = max(stats["total_counts"])
+        stats["system_load"] = min(90, stats["detection_time"] / 10)
+        socketio.emit('stats_update', stats)
+
+    def check_camera_errors(self):
+        """Check for camera-related errors"""
+        if not hasattr(self, 'is_mock_camera') or not self.is_mock_camera:
+            actual_width = self.video.get(cv2.CAP_PROP_FRAME_WIDTH)
+            actual_height = self.video.get(cv2.CAP_PROP_FRAME_HEIGHT)
+            if actual_width != frame_width or actual_height != frame_height:
+                log_message(f"Warning: Camera resolution mismatch. Expected: {frame_width}x{frame_height}, Got: {actual_width}x{actual_height}", "warning")
+                system_status = "warning"
+
+        if stats["system_load"] > 80:
+            log_message("Warning: High system load detected", "warning")
+            system_status = "warning"
 
 video_stream = VideoCamera()
 
@@ -311,36 +354,31 @@ def generate_frames():
     while True:
         try:
             # Make sure video_stream exists
-            if video_stream is None:
+            if not video_stream:
                 placeholder = create_placeholder_frame("Camera not initialized")
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
-                eventlet.sleep(1)  # Wait a bit longer before retry
+                eventlet.sleep(1)
                 continue
                 
             frame = video_stream.get_frame()
-            if frame is not None:
+            if frame is not None and isinstance(frame, bytes):
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
             else:
-                # If frame is None, yield an error message or placeholder frame
-                placeholder = create_placeholder_frame("Camera not available")
+                placeholder = create_placeholder_frame("No frame available")
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
-                # Wait a bit longer between retries when there's an issue
                 eventlet.sleep(0.5)
                 continue
         except Exception as e:
             print(f"Error in frame generation: {str(e)}")
-            # Create a placeholder frame with error message
             placeholder = create_placeholder_frame("Error: " + str(e))
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
-            # Wait a bit longer between retries when there's an exception
             eventlet.sleep(0.5)
             continue
         
-        # Standard frame rate timing
         eventlet.sleep(0.033)  # ~30 FPS
 
 def create_placeholder_frame(message):

@@ -34,57 +34,91 @@ class YOLODetector:
         Args:
             frame: The image frame to detect objects in
             confidence_threshold: Optional threshold to override default confidence
+        Returns:
+            list: A list of detection boxes [x, y, w, h]
         """
-        if confidence_threshold is None:
-            confidence_threshold = CONFIDENCE_THRESHOLD
+        # Ensure we always return a list
+        try:
+            if confidence_threshold is None:
+                confidence_threshold = CONFIDENCE_THRESHOLD
             
-        height, width = frame.shape[:2]
-        
-        # Create blob from image
-        blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
-        
-        # Detect objects
-        self.net.setInput(blob)
-        outs = self.net.forward(self.output_layers)
-        
-        # Information to display on screen
-        boxes = []
-        confidences = []
-        class_ids = []
-        
-        # Showing information on the screen
-        for out in outs:
-            for detection in out:
-                scores = detection[5:]
-                class_id = np.argmax(scores)
-                confidence = scores[class_id]
+            if frame is None:
+                print("Warning: Received None frame")
+                return []
                 
-                if confidence > confidence_threshold and class_id == 0:  # 0 is person class
-                    # Object detected
-                    center_x = int(detection[0] * width)
-                    center_y = int(detection[1] * height)
-                    w = int(detection[2] * width)
-                    h = int(detection[3] * height)
-                    
-                    # Rectangle coordinates
-                    x = int(center_x - w / 2)
-                    y = int(center_y - h / 2)
-                    
-                    boxes.append([x, y, w, h])
-                    confidences.append(float(confidence))
-                    class_ids.append(class_id)
-        
-        # Apply non-maximum suppression
-        indexes = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, NMS_THRESHOLD) if boxes else []
-        
-        detections = []
-        if indexes and len(indexes) > 0:
-            # Handle different return types from NMSBoxes in different OpenCV versions
-            if isinstance(indexes, np.ndarray):
-                indexes = indexes.flatten()
+            height, width = frame.shape[:2]
             
-            for i in indexes:
-                detections.append(boxes[i])
-        
-        # Make sure we return a list, not a function
-        return list(detections)
+            # Create blob from image
+            blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
+            
+            # Detect objects
+            self.net.setInput(blob)
+            outs = self.net.forward(self.output_layers)
+            
+            # Initialize empty lists
+            boxes = []
+            confidences = []
+            class_ids = []
+            detections = []  # Final list to return
+            
+            # Process detections
+            for out in outs:
+                if not isinstance(out, np.ndarray):
+                    continue
+                    
+                for detection in out:
+                    if len(detection) < 85:  # YOLO output should have 85 values
+                        continue
+                        
+                    scores = detection[5:]
+                    class_id = np.argmax(scores)
+                    confidence = float(scores[class_id])
+                    
+                    if confidence > confidence_threshold and class_id == 0:  # 0 is person class
+                        # Object detected
+                        center_x = int(detection[0] * width)
+                        center_y = int(detection[1] * height)
+                        w = int(detection[2] * width)
+                        h = int(detection[3] * height)
+                        
+                        # Rectangle coordinates
+                        x = int(center_x - w / 2)
+                        y = int(center_y - h / 2)
+                        
+                        boxes.append([x, y, w, h])
+                        confidences.append(confidence)
+                        class_ids.append(class_id)
+            
+            # Apply non-maximum suppression if we have detections
+            if len(boxes) > 0:
+                try:
+                    indexes = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, NMS_THRESHOLD)
+                    
+                    # Convert indexes to proper format
+                    if isinstance(indexes, tuple):
+                        indexes = indexes[0]
+                    if isinstance(indexes, np.ndarray):
+                        indexes = indexes.flatten()
+                    
+                    # Ensure indexes is iterable
+                    if hasattr(indexes, '__iter__'):
+                        for i in indexes:
+                            if isinstance(i, (int, np.integer)):
+                                detections.append(boxes[i])
+                except Exception as e:
+                    print(f"NMS failed: {e}, using all boxes")
+                    detections = boxes
+            
+            # Final validation
+            if not isinstance(detections, list):
+                print(f"Warning: detections is type {type(detections)}, converting to list")
+                try:
+                    detections = list(detections)
+                except:
+                    detections = []
+            
+            return detections
+            
+        except Exception as e:
+            print(f"Error in detect(): {e}")
+            return []  # Always return a list, even on error
