@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Person Counter - Logs & Reports</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <style>
+        .nav-pills .nav-link.active { background-color: #0d6efd; color: white; }
+        .log-table { font-size: 0.9rem; }
+        .log-table th { position: sticky; top: 0; background: white; z-index: 1; }
+        .odd-row { background-color: rgba(0,0,0,0.025); }
+        .status-normal { color: green; }
+        .status-warning { color: orange; }
+        .status-error { color: red; }
+        .filter-container { background-color: #f8f9fa; border-radius: 0.25rem; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row mb-3">
+            <div class="col-12">
+                <ul class="nav nav-pills">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Live Feed</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/config">System Configuration</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/logs">Logs & Reports</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/errors">
+                            Error Notifications
+                            <span id="errorBadge" class="badge bg-danger d-none">0</span>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">System Logs & Reports</h5>
+                        <div>
+                            <button id="refreshBtn" class="btn btn-sm btn-light me-2">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                            <div class="btn-group">
+                                <button id="exportCsvBtn" class="btn btn-sm btn-light">
+                                    <i class="bi bi-file-earmark-excel"></i> CSV
+                                </button>
+                                <button id="exportPdfBtn" class="btn btn-sm btn-light">
+                                    <i class="bi bi-file-earmark-pdf"></i> PDF
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- Filters -->
+                        <div class="filter-container p-3 mb-3">
+                            <div class="row g-3">
+                                <div class="col-md-3">
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light">
+                                            <i class="bi bi-search"></i>
+                                        </span>
+                                        <input type="text" id="searchInput" class="form-control" placeholder="Search logs...">
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-6">
+                                    <div class="input-group">
+                                        <span class="input-group-text bg-light">Date Range</span>
+                                        <input type="date" id="startDate" class="form-control">
+                                        <span class="input-group-text bg-light">to</span>
+                                        <input type="date" id="endDate" class="form-control">
+                                    </div>
+                                </div>
+                                
+                                <div class="col-md-3">
+                                    <select id="statusFilter" class="form-select">
+                                        <option value="all" selected>All Statuses</option>
+                                        <option value="normal">Normal</option>
+                                        <option value="warning">Warning</option>
+                                        <option value="error">Error</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="col-12 text-end">
+                                    <button id="resetFilters" class="btn btn-sm btn-secondary">
+                                        Reset Filters
+                                    </button>
+                                    <button id="applyFilters" class="btn btn-sm btn-primary">
+                                        Apply Filters
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Log Table -->
+                        <div class="table-responsive" style="max-height: 600px;">
+                            <table class="table table-hover log-table">
+                                <thead>
+                                    <tr>
+                                        <th style="width: 180px;">
+                                            <a href="#" class="text-decoration-none text-dark sort-link" data-sort="timestamp">
+                                                Timestamp <i class="bi bi-arrow-down-up"></i>
+                                            </a>
+                                        </th>
+                                        <th style="width: 80px;">
+                                            <a href="#" class="text-decoration-none text-dark sort-link" data-sort="count">
+                                                Count <i class="bi bi-arrow-down-up"></i>
+                                            </a>
+                                        </th>
+                                        <th style="width: 100px;">
+                                            <a href="#" class="text-decoration-none text-dark sort-link" data-sort="status">
+                                                Status <i class="bi bi-arrow-down-up"></i>
+                                            </a>
+                                        </th>
+                                        <th>Message</th>
+                                        <th style="width: 70px;">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="logsTableBody">
+                                    <!-- Log entries will be dynamically inserted here -->
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- Pagination -->
+                        <nav class="mt-3" aria-label="Log pagination">
+                            <ul class="pagination justify-content-center" id="pagination">
+                                <li class="page-item disabled">
+                                    <a class="page-link" href="#" tabindex="-1">&laquo; Previous</a>
+                                </li>
+                                <li class="page-item active"><a class="page-link" href="#">1</a></li>
+                                <li class="page-item"><a class="page-link" href="#">2</a></li>
+                                <li class="page-item"><a class="page-link" href="#">3</a></li>
+                                <li class="page-item">
+                                    <a class="page-link" href="#">Next &raquo;</a>
+                                </li>
+                            </ul>
+                        </nav>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Log Entry Detail Modal -->
+    <div class="modal fade" id="logDetailModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Log Entry Details</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="logDetailContent">
+                    <!-- Log details will be inserted here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let logs = [];
+        let currentPage = 1;
+        const logsPerPage = 10;
+        let sortField = 'timestamp';
+        let sortDirection = 'desc';
+        let logDetailModal;
+        
+        // Connect to WebSocket
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            fetchLogs();
+        });
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize date inputs
+            const today = new Date();
+            const oneWeekAgo = new Date();
+            oneWeekAgo.setDate(today.getDate() - 7);
+            
+            document.getElementById('startDate').valueAsDate = oneWeekAgo;
+            document.getElementById('endDate').valueAsDate = today;
+            
+            // Initialize modal
+            logDetailModal = new bootstrap.Modal(document.getElementById('logDetailModal'));
+            
+            // Set up event listeners
+            document.querySelectorAll('.sort-link').forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const field = this.dataset.sort;
+                    
+                    if (sortField === field) {
+                        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+                    } else {
+                        sortField = field;
+                        sortDirection = 'asc';
+                    }
+                    
+                    renderLogs();
+                });
+            });
+            
+            document.getElementById('applyFilters').addEventListener('click', filterLogs);
+            document.getElementById('resetFilters').addEventListener('click', resetFilters);
+            document.getElementById('refreshBtn').addEventListener('click', fetchLogs);
+            
+            document.getElementById('exportCsvBtn').addEventListener('click', () => exportLogs('csv'));
+            document.getElementById('exportPdfBtn').addEventListener('click', () => exportLogs('pdf'));
+            
+            document.getElementById('searchInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    filterLogs();
+                }
+            });
+            
+            // Update error badge
+            updateErrorBadge();
+            
+            // Load initial logs
+            loadSampleLogs();
+            renderLogs();
+        });
+        
+        // Load sample logs (normally these would come from the server)
+        function loadSampleLogs() {
+            logs = [];
+            
+            // Generate sample logs over the past 7 days
+            const today = new Date();
+            for (let i = 0; i < 50; i++) {
+                const date = new Date(today);
+                date.setDate(today.getDate() - Math.floor(Math.random() * 7));
+                date.setHours(Math.floor(Math.random() * 24), Math.floor(Math.random() * 60), Math.floor(Math.random() * 60));
+                
+                const count = Math.floor(Math.random() * 20);
+                let status, message;
+                
+                const statusRand = Math.random();
+                if (statusRand > 0.9) {
+                    status = 'error';
+                    message = `Error detected: ${['Camera disconnected', 'Detection model failed', 'Processing timeout'][Math.floor(Math.random() * 3)]}`;
+                } else if (statusRand > 0.7) {
+                    status = 'warning';
+                    message = `Warning: ${['Low frame rate detected', 'High CPU usage', 'Low memory available'][Math.floor(Math.random() * 3)]}`;
+                } else {
+                    status = 'normal';
+                    message = `Normal operation: ${count} people detected`;
+                }
+                
+                logs.push({
+                    id: i + 1,
+                    timestamp: date.toISOString(),
+                    count: count,
+                    status: status,
+                    message: message,
+                    details: {
+                        duration: Math.floor(Math.random() * 500) + 'ms',
+                        frameRate: Math.floor(Math.random() * 30) + 5 + ' FPS',
+                        systemLoad: (Math.random() * 50 + 10).toFixed(1) + '%',
+                        camera: Math.random() > 0.5 ? 'Internal Camera' : 'External Camera'
+                    }
+                });
+            }
+        }
+        
+        // Update error badge count from localStorage
+        function updateErrorBadge() {
+            const errors = JSON.parse(localStorage.getItem('personCounterErrors') || '[]');
+            const badge = document.getElementById('errorBadge');
+            
+            if (errors.length > 0) {
+                badge.textContent = errors.length;
+                badge.classList.remove('d-none');
+            } else {
+                badge.classList.add('d-none');
+            }
+        }
+        
+        // Fetch logs from server
+        function fetchLogs() {
+            socket.emit('get_logs', {}, function(response) {
+                console.log('Logs refreshed');
+                
+                // In the real application, we would use response.logs
+                // For now, we'll just use our sample logs
+                loadSampleLogs();
+                renderLogs();
+            });
+        }
+        
+        // Filter logs based on user input
+        function filterLogs() {
+            const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+            const startDate = document.getElementById('startDate').value;
+            const endDate = document.getElementById('endDate').value;
+            const status = document.getElementById('statusFilter').value;
+            
+            // Filter logs
+            const filteredLogs = logs.filter(log => {
+                const logDate = log.timestamp.split('T')[0]; // Get just the date part
+                
+                // Apply filters
+                if (searchTerm && !log.message.toLowerCase().includes(searchTerm)) {
+                    return false;
+                }
+                
+                if (startDate && logDate < startDate) {
+                    return false;
+                }
+                
+                if (endDate && logDate > endDate) {
+                    return false;
+                }
+                
+                if (status !== 'all' && log.status !== status) {
+                    return false;
+                }
+                
+                return true;
+            });
+            
+            // Update display
+            logs = filteredLogs;
+            currentPage = 1;
+            renderLogs();
+        }
+        
+        // Reset filters to default
+        function resetFilters() {
+            document.getElementById('searchInput').value = '';
+            
+            const today = new Date();
+            const oneWeekAgo = new Date();
+            oneWeekAgo.setDate(today.getDate() - 7);
+            
+            document.getElementById('startDate').valueAsDate = oneWeekAgo;
+            document.getElementById('endDate').valueAsDate = today;
+            document.getElementById('statusFilter').value = 'all';
+            
+            loadSampleLogs();
+            currentPage = 1;
+            renderLogs();
+        }
+        
+        // Render logs with pagination
+        function renderLogs() {
+            // Sort logs
+            logs.sort((a, b) => {
+                let comparison = 0;
+                
+                if (sortField === 'timestamp') {
+                    comparison = new Date(a.timestamp) - new Date(b.timestamp);
+                } else if (sortField === 'count') {
+                    comparison = a.count - b.count;
+                } else if (sortField === 'status') {
+                    comparison = a.status.localeCompare(b.status);
+                }
+                
+                return sortDirection === 'asc' ? comparison : -comparison;
+            });
+            
+            // Calculate pagination
+            const totalPages = Math.ceil(logs.length / logsPerPage);
+            
+            if (currentPage > totalPages) {
+                currentPage = totalPages || 1;
+            }
+            
+            const startIndex = (currentPage - 1) * logsPerPage;
+            const endIndex = startIndex + logsPerPage;
+            const pagedLogs = logs.slice(startIndex, endIndex);
+            
+            // Render log entries
+            const tableBody = document.getElementById('logsTableBody');
+            tableBody.innerHTML = '';
+            
+            if (pagedLogs.length === 0) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="5" class="text-center py-4">
+                            <i class="bi bi-exclamation-circle text-muted me-2"></i>
+                            No logs found matching your criteria
+                        </td>
+                    </tr>
+                `;
+            } else {
+                pagedLogs.forEach((log, index) => {
+                    const row = document.createElement('tr');
+                    row.className = index % 2 === 0 ? '' : 'odd-row';
+                    
+                    const statusClass = `status-${log.status}`;
+                    const formattedTimestamp = formatTimestamp(log.timestamp);
+                    
+                    row.innerHTML = `
+                        <td>${formattedTimestamp}</td>
+                        <td>${log.count}</td>
+                        <td>
+                            <span class="${statusClass}">
+                                <i class="bi ${getStatusIcon(log.status)}"></i>
+                                ${capitalizeFirstLetter(log.status)}
+                            </span>
+                        </td>
+                        <td>${log.message}</td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-secondary view-details" data-log-id="${log.id}">
+                                <i class="bi bi-info-circle"></i>
+                            </button>
+                        </td>
+                    `;
+                    
+                    tableBody.appendChild(row);
+                });
+            }
+            
+            // Add event listeners to view detail buttons
+            document.querySelectorAll('.view-details').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    const logId = parseInt(this.dataset.logId);
+                    const log = logs.find(l => l.id === logId);
+                    showLogDetails(log);
+                });
+            });
+            
+            // Update pagination
+            renderPagination(totalPages);
+        }
+        
+        // Render pagination controls
+        function renderPagination(totalPages) {
+            const pagination = document.getElementById('pagination');
+            pagination.innerHTML = '';
+            
+            // Previous button
+            const prevLi = document.createElement('li');
+            prevLi.className = `page-item ${currentPage === 1 ? 'disabled' : ''}`;
+            prevLi.innerHTML = `<a class="page-link" href="#">&laquo; Previous</a>`;
+            prevLi.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (currentPage > 1) {
+                    currentPage--;
+                    renderLogs();
+                }
+            });
+            pagination.appendChild(prevLi);
+            
+            // Page numbers
+            const maxPages = Math.min(totalPages, 5);
+            let startPage = Math.max(1, currentPage - 2);
+            let endPage = Math.min(totalPages, startPage + maxPages - 1);
+            
+            if (endPage - startPage < maxPages - 1) {
+                startPage = Math.max(1, endPage - maxPages + 1);
+            }
+            
+            for (let i = startPage; i <= endPage; i++) {
+                const li = document.createElement('li');
+                li.className = `page-item ${i === currentPage ? 'active' : ''}`;
+                li.innerHTML = `<a class="page-link" href="#">${i}</a>`;
+                li.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    currentPage = i;
+                    renderLogs();
+                });
+                pagination.appendChild(li);
+            }
+            
+            // Next button
+            const nextLi = document.createElement('li');
+            nextLi.className = `page-item ${currentPage === totalPages ? 'disabled' : ''}`;
+            nextLi.innerHTML = `<a class="page-link" href="#">Next &raquo;</a>`;
+            nextLi.addEventListener('click', function(e) {
+                e.preventDefault();
+                if (currentPage < totalPages) {
+                    currentPage++;
+                    renderLogs();
+                }
+            });
+            pagination.appendChild(nextLi);
+        }
+        
+        // Show log details modal
+        function showLogDetails(log) {
+            const content = document.getElementById('logDetailContent');
+            
+            content.innerHTML = `
+                <div class="mb-3">
+                    <p class="fw-bold mb-1">Timestamp</p>
+                    <p>${formatTimestamp(log.timestamp)}</p>
+                </div>
+                <div class="mb-3">
+                    <p class="fw-bold mb-1">Status</p>
+                    <p><span class="status-${log.status}">
+                        <i class="bi ${getStatusIcon(log.status)}"></i> 
+                        ${capitalizeFirstLetter(log.status)}
+                    </span></p>
+                </div>
+                <div class="mb-3">
+                    <p class="fw-bold mb-1">Message</p>
+                    <p>${log.message}</p>
+                </div>
+                <div class="mb-3">
+                    <p class="fw-bold mb-1">People Count</p>
+                    <p>${log.count}</p>
+                </div>
+                <div class="mb-3">
+                    <p class="fw-bold mb-1">Technical Details</p>
+                    <ul class="list-group">
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Processing Time
+                            <span class="badge bg-primary rounded-pill">${log.details.duration}</span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Frame Rate
+                            <span class="badge bg-primary rounded-pill">${log.details.frameRate}</span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            System Load
+                            <span class="badge bg-primary rounded-pill">${log.details.systemLoad}</span>
+                        </li>
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            Camera
+                            <span class="badge bg-primary rounded-pill">${log.details.camera}</span>
+                        </li>
+                    </ul>
+                </div>
+            `;
+            
+            logDetailModal.show();
+        }
+        
+        // Export logs as CSV or PDF
+        function exportLogs(format) {
+            const filename = `person-counter-logs-${new Date().toISOString().split('T')[0]}.${format}`;
+            
+            if (format === 'csv') {
+                // Create CSV content
+                const headers = ['Timestamp', 'Count', 'Status', 'Message'];
+                let csvContent = headers.join(',') + '\n';
+                
+                logs.forEach(log => {
+                    const row = [
+                        `"${formatTimestamp(log.timestamp)}"`,
+                        log.count,
+                        `"${log.status}"`,
+                        `"${log.message.replace(/"/g, '""')}"`
+                    ];
+                    csvContent += row.join(',') + '\n';
+                });
+                
+                // Create download link
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                
+                link.setAttribute('href', url);
+                link.setAttribute('download', filename);
+                link.style.display = 'none';
+                
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            } else {
+                // In a real app, PDF export would be implemented here
+                // For this demo, we'll just show an alert
+                alert('PDF export would be implemented here in a real application');
+            }
+        }
+        
+        // Helper function to format timestamp
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleString('en-US', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: true
+            });
+        }
+        
+        // Helper function to get status icon
+        function getStatusIcon(status) {
+            switch (status) {
+                case 'normal': return 'bi-check-circle-fill';
+                case 'warning': return 'bi-exclamation-triangle-fill';
+                case 'error': return 'bi-x-circle-fill';
+                default: return 'bi-question-circle-fill';
+            }
+        }
+        
+        // Helper function to capitalize first letter
+        function capitalizeFirstLetter(string) {
+            return string.charAt(0).toUpperCase() + string.slice(1);
+        }
+    </script>
+</body>
+</html>

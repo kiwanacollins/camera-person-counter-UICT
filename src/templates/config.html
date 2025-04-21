@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Person Counter - System Configuration</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <style>
+        .nav-pills .nav-link.active { background-color: #0d6efd; color: white; }
+        .tooltip-inner { max-width: 300px; text-align: left; }
+        .form-label { font-weight: 500; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row mb-3">
+            <div class="col-12">
+                <ul class="nav nav-pills">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Live Feed</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/config">System Configuration</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/logs">Logs & Reports</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/errors">
+                            Error Notifications
+                            <span id="errorBadge" class="badge bg-danger d-none">0</span>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="row">
+            <div class="col-md-8 mx-auto">
+                <div class="card mb-5">
+                    <div class="card-header bg-primary text-white">
+                        <h5 class="mb-0">System Configuration</h5>
+                    </div>
+                    <div class="card-body">
+                        <form id="configForm">
+                            <!-- Camera Settings Section -->
+                            <div class="mb-4">
+                                <h5 class="border-bottom pb-2 mb-3">Camera Settings</h5>
+                                
+                                <div class="mb-3">
+                                    <label for="cameraSelect" class="form-label">Select Camera</label>
+                                    <select id="cameraSelect" class="form-select">
+                                        <option value="0">Internal Camera</option>
+                                        <option value="1">External Camera</option>
+                                        <option value="2">USB Camera</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <button id="testCameraBtn" class="btn btn-secondary">
+                                        <i class="bi bi-camera-video"></i> Test Camera
+                                    </button>
+                                    <div id="cameraPreview" class="mt-2 d-none">
+                                        <div class="alert alert-info">
+                                            <small>Camera preview will appear here...</small>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="frameRate" class="form-label">Frame Rate (FPS)</label>
+                                    <input type="number" id="frameRate" class="form-control" value="30" min="1" max="60">
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="resolution" class="form-label">Resolution</label>
+                                    <select id="resolution" class="form-select">
+                                        <option value="640x480">640 x 480 (VGA)</option>
+                                        <option value="1280x720" selected>1280 x 720 (HD)</option>
+                                        <option value="1920x1080">1920 x 1080 (Full HD)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            
+                            <!-- Detection Settings Section -->
+                            <div class="mb-4">
+                                <h5 class="border-bottom pb-2 mb-3">Detection Settings</h5>
+                                
+                                <div class="mb-3">
+                                    <label for="sensitivityRange" class="form-label">Detection Sensitivity</label>
+                                    <div class="d-flex align-items-center">
+                                        <span class="me-2">Low</span>
+                                        <input type="range" class="form-range flex-grow-1" id="sensitivityRange" min="1" max="3" step="1" value="2">
+                                        <span class="ms-2">High</span>
+                                    </div>
+                                    <div class="form-text" id="sensitivityHelp">
+                                        <span class="badge bg-primary">Medium Sensitivity</span>:
+                                        Balanced detection between accuracy and performance.
+                                    </div>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="confidenceThreshold" class="form-label">Confidence Threshold (%)</label>
+                                    <input type="number" id="confidenceThreshold" class="form-control" value="50" min="1" max="100">
+                                    <div class="form-text">
+                                        Higher values reduce false positives but may miss some detections.
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Logging Preferences Section -->
+                            <div class="mb-4">
+                                <h5 class="border-bottom pb-2 mb-3">Logging Preferences</h5>
+                                
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="enableLogging" checked>
+                                    <label class="form-check-label" for="enableLogging">
+                                        Enable System Logging
+                                    </label>
+                                </div>
+                                
+                                <div class="mb-3">
+                                    <label for="logFrequency" class="form-label">Log Frequency</label>
+                                    <select id="logFrequency" class="form-select">
+                                        <option value="30">Every 30 seconds</option>
+                                        <option value="60" selected>Every minute</option>
+                                        <option value="300">Every 5 minutes</option>
+                                        <option value="600">Every 10 minutes</option>
+                                    </select>
+                                </div>
+                                
+                                <div class="mb-3 form-check">
+                                    <input class="form-check-input" type="checkbox" id="logEvents" checked>
+                                    <label class="form-check-label" for="logEvents">
+                                        Log Detection Events
+                                    </label>
+                                </div>
+                                
+                                <div class="mb-3 form-check">
+                                    <input class="form-check-input" type="checkbox" id="logErrors" checked>
+                                    <label class="form-check-label" for="logErrors">
+                                        Log System Errors
+                                    </label>
+                                </div>
+                            </div>
+                            
+                            <!-- Action Buttons -->
+                            <div class="d-flex justify-content-end mt-4">
+                                <button type="button" id="resetBtn" class="btn btn-secondary me-2">
+                                    Reset to Defaults
+                                </button>
+                                <button type="button" id="cancelBtn" class="btn btn-outline-danger me-2">
+                                    Cancel
+                                </button>
+                                <button type="submit" id="saveBtn" class="btn btn-success">
+                                    <i class="bi bi-save"></i> Save Changes
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        
+        // Connect to WebSocket
+        socket.on('connect', () => {
+            console.log('Connected to server');
+        });
+        
+        // Load saved configuration from local storage
+        document.addEventListener('DOMContentLoaded', function() {
+            loadConfigFromStorage();
+            updateErrorBadge();
+        });
+        
+        // Handle sensitivity range changes
+        document.getElementById('sensitivityRange').addEventListener('input', function(e) {
+            const value = parseInt(e.target.value);
+            const helpText = document.getElementById('sensitivityHelp');
+            
+            switch(value) {
+                case 1:
+                    helpText.innerHTML = '<span class="badge bg-success">Low Sensitivity</span>: Reduces false positives but may miss some people.';
+                    break;
+                case 2:
+                    helpText.innerHTML = '<span class="badge bg-primary">Medium Sensitivity</span>: Balanced detection between accuracy and performance.';
+                    break;
+                case 3:
+                    helpText.innerHTML = '<span class="badge bg-warning text-dark">High Sensitivity</span>: Better at detecting people but may have more false positives.';
+                    break;
+            }
+        });
+        
+        // Handle Test Camera button
+        document.getElementById('testCameraBtn').addEventListener('click', function(e) {
+            e.preventDefault();
+            const previewDiv = document.getElementById('cameraPreview');
+            previewDiv.classList.toggle('d-none');
+            
+            if (!previewDiv.classList.contains('d-none')) {
+                const camera = document.getElementById('cameraSelect').value;
+                socket.emit('test_camera', { camera });
+                previewDiv.innerHTML = `<div class="alert alert-info">Testing camera ${camera}... <div class="spinner-border spinner-border-sm" role="status"></div></div>`;
+                
+                // Simulate receiving camera feed (in a real app, this would come from the server)
+                setTimeout(() => {
+                    previewDiv.innerHTML = `<img src="{{ url_for('video_feed') }}?test=true&camera=${camera}" class="img-fluid rounded" style="max-height: 200px;">`;
+                }, 1500);
+            }
+        });
+        
+        // Form submission
+        document.getElementById('configForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Collect all form values
+            const config = {
+                camera: {
+                    id: document.getElementById('cameraSelect').value,
+                    frameRate: document.getElementById('frameRate').value,
+                    resolution: document.getElementById('resolution').value
+                },
+                detection: {
+                    sensitivity: document.getElementById('sensitivityRange').value,
+                    confidenceThreshold: document.getElementById('confidenceThreshold').value
+                },
+                logging: {
+                    enabled: document.getElementById('enableLogging').checked,
+                    frequency: document.getElementById('logFrequency').value,
+                    logEvents: document.getElementById('logEvents').checked,
+                    logErrors: document.getElementById('logErrors').checked
+                },
+                lastUpdated: new Date().toISOString()
+            };
+            
+            // Save configuration locally
+            localStorage.setItem('personCounterConfig', JSON.stringify(config));
+            
+            // Send configuration to server
+            socket.emit('update_config', config);
+            
+            // Show success message
+            alert('Configuration saved successfully!');
+        });
+        
+        // Reset button
+        document.getElementById('resetBtn').addEventListener('click', function() {
+            if (confirm('Are you sure you want to reset all settings to default values?')) {
+                document.getElementById('cameraSelect').value = '0';
+                document.getElementById('frameRate').value = '30';
+                document.getElementById('resolution').value = '1280x720';
+                document.getElementById('sensitivityRange').value = '2';
+                document.getElementById('confidenceThreshold').value = '50';
+                document.getElementById('enableLogging').checked = true;
+                document.getElementById('logFrequency').value = '60';
+                document.getElementById('logEvents').checked = true;
+                document.getElementById('logErrors').checked = true;
+                
+                // Trigger the sensitivity help text update
+                document.getElementById('sensitivityRange').dispatchEvent(new Event('input'));
+            }
+        });
+        
+        // Cancel button
+        document.getElementById('cancelBtn').addEventListener('click', function() {
+            loadConfigFromStorage();
+        });
+        
+        // Load configuration from storage
+        function loadConfigFromStorage() {
+            const savedConfig = localStorage.getItem('personCounterConfig');
+            
+            if (savedConfig) {
+                const config = JSON.parse(savedConfig);
+                
+                // Camera settings
+                document.getElementById('cameraSelect').value = config.camera.id;
+                document.getElementById('frameRate').value = config.camera.frameRate;
+                document.getElementById('resolution').value = config.camera.resolution;
+                
+                // Detection settings
+                document.getElementById('sensitivityRange').value = config.detection.sensitivity;
+                document.getElementById('confidenceThreshold').value = config.detection.confidenceThreshold;
+                
+                // Trigger the sensitivity help text update
+                document.getElementById('sensitivityRange').dispatchEvent(new Event('input'));
+                
+                // Logging preferences
+                document.getElementById('enableLogging').checked = config.logging.enabled;
+                document.getElementById('logFrequency').value = config.logging.frequency;
+                document.getElementById('logEvents').checked = config.logging.logEvents;
+                document.getElementById('logErrors').checked = config.logging.logErrors;
+            }
+        }
+        
+        // Update error badge count from localStorage
+        function updateErrorBadge() {
+            const errors = JSON.parse(localStorage.getItem('personCounterErrors') || '[]');
+            const badge = document.getElementById('errorBadge');
+            
+            if (errors.length > 0) {
+                badge.textContent = errors.length;
+                badge.classList.remove('d-none');
+            } else {
+                badge.classList.add('d-none');
+            }
+        }
+    </script>
+</body>
+</html>

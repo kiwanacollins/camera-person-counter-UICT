@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Person Counter - Error Notifications</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.8.1/font/bootstrap-icons.css">
+    <style>
+        .nav-pills .nav-link.active { background-color: #0d6efd; color: white; }
+        .error-card { transition: all 0.2s ease-in-out; }
+        .error-card:hover { transform: translateY(-3px); box-shadow: 0 5px 10px rgba(0,0,0,0.15); }
+        .error-severity-high { border-left: 5px solid #dc3545; }
+        .error-severity-medium { border-left: 5px solid #fd7e14; }
+        .error-severity-low { border-left: 5px solid #ffc107; }
+        .error-badge { position: absolute; top: 10px; right: 10px; }
+        .error-timestamp { font-size: 0.8rem; color: #6c757d; }
+        .error-empty { font-size: 1.1rem; color: #6c757d; }
+    </style>
+</head>
+<body>
+    <div class="container-fluid">
+        <div class="row mb-3">
+            <div class="col-12">
+                <ul class="nav nav-pills">
+                    <li class="nav-item">
+                        <a class="nav-link" href="/">Live Feed</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/dashboard">Dashboard</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/config">System Configuration</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" href="/logs">Logs & Reports</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link active" href="/errors">
+                            Error Notifications
+                            <span id="errorBadge" class="badge bg-danger">0</span>
+                        </a>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="row mb-4">
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header bg-danger text-white d-flex justify-content-between align-items-center">
+                        <h5 class="mb-0">
+                            <i class="bi bi-exclamation-triangle"></i> Error Notifications
+                        </h5>
+                        <div>
+                            <button id="refreshErrorsBtn" class="btn btn-sm btn-light me-2">
+                                <i class="bi bi-arrow-clockwise"></i> Refresh
+                            </button>
+                            <button id="clearAllBtn" class="btn btn-sm btn-light">
+                                <i class="bi bi-trash"></i> Clear All
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <!-- Filter Controls -->
+                        <div class="row mb-3">
+                            <div class="col-md-8">
+                                <div class="input-group">
+                                    <span class="input-group-text bg-light">
+                                        <i class="bi bi-search"></i>
+                                    </span>
+                                    <input type="text" id="errorSearchInput" class="form-control" placeholder="Search errors...">
+                                </div>
+                            </div>
+                            <div class="col-md-4">
+                                <select id="severityFilter" class="form-select">
+                                    <option value="all" selected>All Severities</option>
+                                    <option value="high">High</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low</option>
+                                </select>
+                            </div>
+                        </div>
+                        
+                        <!-- Error List -->
+                        <div id="errorList" class="row g-3">
+                            <!-- Error items will be inserted here -->
+                            <div class="col-12 text-center py-5 error-empty d-none" id="noErrorsMessage">
+                                <i class="bi bi-check-circle text-success fs-1"></i>
+                                <p class="mt-3">No errors to display. System is operating normally.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Error Detail Modal -->
+    <div class="modal fade" id="errorDetailModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header bg-danger text-white">
+                    <h5 class="modal-title">Error Details</h5>
+                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body" id="errorDetailContent">
+                    <!-- Error details will be inserted here -->
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                    <button type="button" class="btn btn-primary" id="fixErrorBtn">
+                        <i class="bi bi-wrench"></i> Fix Issue
+                    </button>
+                    <button type="button" class="btn btn-danger" id="dismissErrorBtn">
+                        <i class="bi bi-x-circle"></i> Dismiss
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        const socket = io();
+        let errors = [];
+        let selectedErrorId = null;
+        let errorDetailModal;
+        
+        // Connect to WebSocket
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            fetchErrors();
+        });
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            // Initialize modal
+            errorDetailModal = new bootstrap.Modal(document.getElementById('errorDetailModal'));
+            
+            // Set up event listeners
+            document.getElementById('refreshErrorsBtn').addEventListener('click', fetchErrors);
+            document.getElementById('clearAllBtn').addEventListener('click', clearAllErrors);
+            document.getElementById('errorSearchInput').addEventListener('input', filterErrors);
+            document.getElementById('severityFilter').addEventListener('change', filterErrors);
+            document.getElementById('dismissErrorBtn').addEventListener('click', dismissSelectedError);
+            document.getElementById('fixErrorBtn').addEventListener('click', fixSelectedError);
+            
+            // Load sample errors
+            loadSampleErrors();
+            renderErrors(errors);
+        });
+        
+        // Socket events for real-time updates
+        socket.on('new_error', (error) => {
+            console.log('New error received:', error);
+            errors.unshift(error);
+            saveErrorsToStorage();
+            renderErrors(errors);
+            updateErrorBadge();
+        });
+        
+        // Load sample errors (normally these would come from the server)
+        function loadSampleErrors() {
+            // Try to get errors from local storage
+            const storedErrors = localStorage.getItem('personCounterErrors');
+            if (storedErrors) {
+                errors = JSON.parse(storedErrors);
+                return;
+            }
+            
+            // Generate sample errors if none in storage
+            errors = [
+                {
+                    id: 1,
+                    title: 'Camera Disconnected',
+                    message: 'The external camera has been disconnected unexpectedly.',
+                    timestamp: new Date(Date.now() - 15 * 60000).toISOString(),
+                    severity: 'high',
+                    status: 'active',
+                    source: 'camera',
+                    errorCode: 'CAM-001',
+                    details: 'The system detected that the external USB camera is no longer connected. This may affect person counting functionality.',
+                    solution: 'Check the USB connection to the camera. Make sure the cable is securely plugged in and the camera is powered on. You may need to restart the application after reconnecting.'
+                },
+                {
+                    id: 2,
+                    title: 'Low Detection Confidence',
+                    message: 'Detection confidence has dropped below 40%.',
+                    timestamp: new Date(Date.now() - 45 * 60000).toISOString(),
+                    severity: 'medium',
+                    status: 'active',
+                    source: 'detection',
+                    errorCode: 'DET-003',
+                    details: 'The detection model is reporting low confidence scores for person detection. This may result in missed counts or false positives.',
+                    solution: 'Try adjusting the lighting conditions in the monitored area. You can also try increasing the sensitivity level in the system configuration settings.'
+                },
+                {
+                    id: 3,
+                    title: 'High CPU Usage',
+                    message: 'CPU usage has been over 85% for the last 5 minutes.',
+                    timestamp: new Date(Date.now() - 120 * 60000).toISOString(),
+                    severity: 'low',
+                    status: 'active',
+                    source: 'system',
+                    errorCode: 'SYS-002',
+                    details: 'The system has detected sustained high CPU usage which may affect performance and response time of the application.',
+                    solution: 'Close unnecessary applications running on the system. Consider lowering the resolution or frame rate in the system configuration settings to reduce CPU load.'
+                }
+            ];
+            
+            // Save to local storage
+            saveErrorsToStorage();
+        }
+        
+        // Save errors to local storage
+        function saveErrorsToStorage() {
+            localStorage.setItem('personCounterErrors', JSON.stringify(errors));
+            updateErrorBadge();
+        }
+        
+        // Update error badge count
+        function updateErrorBadge() {
+            const activeErrors = errors.filter(err => err.status === 'active');
+            const badge = document.getElementById('errorBadge');
+            
+            badge.textContent = activeErrors.length;
+            if (activeErrors.length === 0) {
+                badge.classList.add('d-none');
+            } else {
+                badge.classList.remove('d-none');
+            }
+        }
+        
+        // Fetch errors from server
+        function fetchErrors() {
+            socket.emit('get_errors', {}, function(response) {
+                console.log('Errors refreshed');
+                
+                // In the real application, we would use response.errors
+                // For now, we'll just use our sample errors from storage
+                loadSampleErrors();
+                renderErrors(errors);
+            });
+        }
+        
+        // Filter errors based on user input
+        function filterErrors() {
+            const searchTerm = document.getElementById('errorSearchInput').value.toLowerCase();
+            const severity = document.getElementById('severityFilter').value;
+            
+            // Filter errors
+            const filteredErrors = errors.filter(error => {
+                // Apply filters
+                if (searchTerm && 
+                    !error.title.toLowerCase().includes(searchTerm) && 
+                    !error.message.toLowerCase().includes(searchTerm)) {
+                    return false;
+                }
+                
+                if (severity !== 'all' && error.severity !== severity) {
+                    return false;
+                }
+                
+                return true;
+            });
+            
+            renderErrors(filteredErrors);
+        }
+        
+        // Render errors
+        function renderErrors(errorsToRender) {
+            const errorList = document.getElementById('errorList');
+            const noErrorsMessage = document.getElementById('noErrorsMessage');
+            
+            // Clear current errors
+            errorList.innerHTML = '';
+            
+            // Show "no errors" message if empty
+            if (errorsToRender.length === 0) {
+                noErrorsMessage.classList.remove('d-none');
+                errorList.appendChild(noErrorsMessage);
+                return;
+            } else {
+                noErrorsMessage.classList.add('d-none');
+            }
+            
+            // Add each error
+            errorsToRender.forEach(error => {
+                if (error.status !== 'active') return;
+                
+                const errorCard = document.createElement('div');
+                errorCard.className = `col-md-6`;
+                
+                errorCard.innerHTML = `
+                    <div class="card error-card error-severity-${error.severity}" data-error-id="${error.id}">
+                        <div class="card-body position-relative">
+                            <span class="badge bg-${getSeverityColor(error.severity)} error-badge">
+                                ${capitalizeFirstLetter(error.severity)}
+                            </span>
+                            <h5 class="card-title">
+                                <i class="bi bi-${getErrorIcon(error.source)}"></i>
+                                ${error.title}
+                            </h5>
+                            <p class="card-text">${error.message}</p>
+                            <p class="error-timestamp mb-3">
+                                <i class="bi bi-clock"></i> ${formatTimeAgo(error.timestamp)}
+                            </p>
+                            <div class="d-flex justify-content-between">
+                                <button class="btn btn-sm btn-outline-primary view-error-details">
+                                    <i class="bi bi-info-circle"></i> Details
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger dismiss-error">
+                                    <i class="bi bi-x-circle"></i> Dismiss
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                errorList.appendChild(errorCard);
+                
+                // Add event listeners
+                const card = errorCard.querySelector('.error-card');
+                card.querySelector('.view-error-details').addEventListener('click', () => {
+                    showErrorDetails(error.id);
+                });
+                
+                card.querySelector('.dismiss-error').addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    dismissError(error.id);
+                });
+            });
+        }
+        
+        // Show error details modal
+        function showErrorDetails(errorId) {
+            const error = errors.find(e => e.id === errorId);
+            if (!error) return;
+            
+            selectedErrorId = errorId;
+            
+            const content = document.getElementById('errorDetailContent');
+            
+            content.innerHTML = `
+                <div class="alert alert-${getSeverityColor(error.severity)} mb-4">
+                    <h5 class="alert-heading">${error.title}</h5>
+                    <p>${error.message}</p>
+                    <hr>
+                    <p class="mb-0"><strong>Error Code:</strong> ${error.errorCode}</p>
+                </div>
+                
+                <div class="mb-3">
+                    <h6>Details</h6>
+                    <p>${error.details}</p>
+                </div>
+                
+                <div class="mb-3">
+                    <h6>Recommended Solution</h6>
+                    <p>${error.solution}</p>
+                </div>
+                
+                <div class="d-flex justify-content-between">
+                    <small class="text-muted">
+                        <strong>Source:</strong> ${capitalizeFirstLetter(error.source)}
+                    </small>
+                    <small class="text-muted">
+                        <strong>Occurred:</strong> ${formatTimestamp(error.timestamp)}
+                    </small>
+                </div>
+            `;
+            
+            errorDetailModal.show();
+        }
+        
+        // Dismiss an error
+        function dismissError(errorId) {
+            const errorIndex = errors.findIndex(e => e.id === errorId);
+            if (errorIndex !== -1) {
+                errors[errorIndex].status = 'dismissed';
+                saveErrorsToStorage();
+                renderErrors(errors);
+            }
+        }
+        
+        // Dismiss the currently selected error from the modal
+        function dismissSelectedError() {
+            if (selectedErrorId) {
+                dismissError(selectedErrorId);
+                errorDetailModal.hide();
+            }
+        }
+        
+        // Fix the currently selected error
+        function fixSelectedError() {
+            const error = errors.find(e => e.id === selectedErrorId);
+            if (!error) return;
+            
+            // In a real app, this would communicate with the server to attempt auto-fixing
+            socket.emit('fix_error', { errorId: selectedErrorId }, function(response) {
+                console.log('Fix error response:', response);
+            });
+            
+            // For the demo, we'll simulate a success after a delay
+            const fixBtn = document.getElementById('fixErrorBtn');
+            fixBtn.disabled = true;
+            fixBtn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Fixing...';
+            
+            setTimeout(() => {
+                // Show success message and dismiss the error
+                alert(`The system has attempted to fix the issue: ${error.title}`);
+                dismissSelectedError();
+                fixBtn.disabled = false;
+                fixBtn.innerHTML = '<i class="bi bi-wrench"></i> Fix Issue';
+            }, 2000);
+        }
+        
+        // Clear all errors
+        function clearAllErrors() {
+            if (confirm('Are you sure you want to clear all error notifications?')) {
+                errors.forEach(error => {
+                    error.status = 'dismissed';
+                });
+                saveErrorsToStorage();
+                renderErrors(errors);
+            }
+        }
+        
+        // Helper function to get severity color class
+        function getSeverityColor(severity) {
+            switch (severity) {
+                case 'high': return 'danger';
+                case 'medium': return 'warning';
+                case 'low': return 'info';
+                default: return 'secondary';
+            }
+        }
+        
+        // Helper function to get error icon
+        function getErrorIcon(source) {
+            switch (source) {
+                case 'camera': return 'camera-video';
+                case 'detection': return 'eye';
+                case 'system': return 'cpu';
+                case 'network': return 'wifi';
+                default: return 'exclamation-triangle';
+            }
+        }
+        
+        // Helper function to format timestamp
+        function formatTimestamp(timestamp) {
+            const date = new Date(timestamp);
+            return date.toLocaleString('en-US', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit',
+                hour12: true
+            });
+        }
+        
+        // Helper function to format relative time
+        function formatTimeAgo(timestamp) {
+            const now = new Date();
+            const errorTime = new Date(timestamp);
+            const diffMs = now - errorTime;
+            const diffSec = Math.floor(diffMs / 1000);
+            
+            if (diffSec < 60) return 'Just now';
+            
+            const diffMin = Math.floor(diffSec / 60);
+            if (diffMin < 60) return `${diffMin} minute${diffMin !== 1 ? 's' : ''} ago`;
+            
+            const diffHour = Math.floor(diffMin / 60);
+            if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? 's' : ''} ago`;
+            
+            const diffDay = Math.floor(diffHour / 24);
+            return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`;
+        }
+        
+        // Helper function to capitalize first letter
+        function capitalizeFirstLetter(string) {
+            return string.charAt(0).toUpperCase() + string.slice(1);
+        }
+    </script>
+</body>
+</html>
