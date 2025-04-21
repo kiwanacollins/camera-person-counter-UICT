@@ -4,9 +4,11 @@ eventlet.monkey_patch()
 
 # Standard library imports
 import cv2
+import numpy as np  # Add NumPy for frame manipulation
 import base64
 import json
 import threading
+import os
 from datetime import datetime
 
 # Flask and SocketIO imports
@@ -55,16 +57,39 @@ with app.app_context():
 
 class VideoCamera:
     def __init__(self):
-        self.video = cv2.VideoCapture(current_camera)
-        self.video.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
-        self.video.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
-        self.video.set(cv2.CAP_PROP_FPS, frame_rate)
+        # Try opening the camera with multiple attempts if needed
+        self.video = None
+        self.connect_camera()
+        
         self.lock = eventlet.semaphore.Semaphore()  # Use eventlet's semaphore
         self.is_tracking = False
         self.frame_count = 0
         self.fps_start_time = datetime.now()
         self.actual_fps = 0
         self.last_error_check = datetime.now()
+    
+    def connect_camera(self):
+        """Try to establish camera connection with retry logic"""
+        # Try to open camera - with fallback to default camera 0 if specified one fails
+        try:
+            self.video = cv2.VideoCapture(current_camera)
+            if not self.video.isOpened():
+                log_message(f"Failed to open camera {current_camera}, falling back to default camera", "warning")
+                self.video = cv2.VideoCapture(0)  # Fallback to default camera
+                
+            # Configure camera properties
+            self.video.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
+            self.video.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
+            self.video.set(cv2.CAP_PROP_FPS, frame_rate)
+            
+            # Verify camera is working
+            success, _ = self.video.read()
+            if not success:
+                log_message("Camera opened but failed to read frame", "warning")
+        except Exception as e:
+            log_message(f"Error initializing camera: {str(e)}", "error")
+            # Create a dummy capture as fallback
+            self.video = cv2.VideoCapture(0)
 
     def __del__(self):
         self.video.release()
@@ -172,16 +197,50 @@ def errors():
 
 def generate_frames():
     while True:
-        frame = video_stream.get_frame()
-        if frame is not None:
+        try:
+            frame = video_stream.get_frame()
+            if frame is not None:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+            else:
+                # If frame is None, yield an error message or placeholder frame
+                placeholder = create_placeholder_frame("Camera not available")
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
+        except Exception as e:
+            log_message(f"Error in frame generation: {str(e)}", "error")
+            # Create a placeholder frame with error message
+            placeholder = create_placeholder_frame("Error: " + str(e))
             yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n\r\n')
+                   b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
+        
         eventlet.sleep(0.033)  # ~30 FPS
+
+def create_placeholder_frame(message):
+    """Create a placeholder frame with an error message"""
+    # Create a black frame with text
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cv2.putText(frame, message, (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+    _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+    return jpeg.tobytes()
 
 @app.route('/video_feed')
 def video_feed():
-    return Response(generate_frames(),
-                    mimetype='multipart/x-mixed-replace; boundary=frame')
+    try:
+        # Initialize the video stream if it doesn't exist yet
+        global video_stream
+        if video_stream is None:
+            video_stream = VideoCamera()
+            
+        return Response(generate_frames(),
+                       mimetype='multipart/x-mixed-replace; boundary=frame')
+    except Exception as e:
+        log_message(f"Error in video feed: {str(e)}", "error")
+        # Return a static error image
+        error_frame = create_placeholder_frame("Error: Camera unavailable")
+        return Response(b'--frame\r\n'
+                      b'Content-Type: image/jpeg\r\n\r\n' + error_frame + b'\r\n',
+                      mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @socketio.on('toggle_tracking')
 def handle_tracking(data):
