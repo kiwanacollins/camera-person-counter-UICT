@@ -192,8 +192,9 @@ class VideoCamera:
                             print("Camera is closed, attempting to reconnect...")
                             self.connect_camera()
                             if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
-                                # If we're now in mock camera mode, restart the function
-                                return self.get_frame()
+                                # If we're now in mock camera mode, create a mock frame instead of recursively calling
+                                frame = self.mock_frame.copy()
+                                cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
                             
                         # Read a frame from the camera
                         success, frame = self.video.read()
@@ -203,14 +204,36 @@ class VideoCamera:
                             system_status = "error"
                             # Fall back to mock camera instead of returning None
                             self.setup_mock_camera()
-                            return self.get_frame()
+                            # Create a mock frame directly instead of recursively calling
+                            frame = self.mock_frame.copy()
+                            # Move the circle
+                            self.circle_x += self.dx
+                            self.circle_y += self.dy
+                            # Bounce off edges
+                            if self.circle_x <= 20 or self.circle_x >= frame_width-20:
+                                self.dx *= -1
+                            if self.circle_y <= 20 or self.circle_y >= frame_height-20:
+                                self.dy *= -1
+                            # Draw the moving circle
+                            cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
                     except Exception as e:
                         print(f"Exception reading frame: {str(e)}")
                         log_message(f"Error reading camera frame: {str(e)}", "error")
                         system_status = "error"
                         # Fall back to mock camera
                         self.setup_mock_camera()
-                        return self.get_frame()
+                        # Create a mock frame directly instead of recursively calling
+                        frame = self.mock_frame.copy()
+                        # Move the circle
+                        self.circle_x += self.dx
+                        self.circle_y += self.dy
+                        # Bounce off edges
+                        if self.circle_x <= 20 or self.circle_x >= frame_width-20:
+                            self.dx *= -1
+                        if self.circle_y <= 20 or self.circle_y >= frame_height-20:
+                            self.dy *= -1
+                        # Draw the moving circle
+                        cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
 
                 # Process frame stats and tracking
                 self.process_frame_stats()
