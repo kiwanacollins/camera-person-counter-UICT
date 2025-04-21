@@ -28,7 +28,16 @@ class YOLODetector:
         else:
             self.output_layers = [self.layer_names[i - 1] for i in output_layers_indices]
         
-    def detect(self, frame):
+    def detect(self, frame, confidence_threshold=None):
+        """
+        Detect objects in the given frame
+        Args:
+            frame: The image frame to detect objects in
+            confidence_threshold: Optional threshold to override default confidence
+        """
+        if confidence_threshold is None:
+            confidence_threshold = CONFIDENCE_THRESHOLD
+            
         height, width = frame.shape[:2]
         
         # Create blob from image
@@ -50,7 +59,7 @@ class YOLODetector:
                 class_id = np.argmax(scores)
                 confidence = scores[class_id]
                 
-                if confidence > CONFIDENCE_THRESHOLD and class_id == 0:  # 0 is person class
+                if confidence > confidence_threshold and class_id == 0:  # 0 is person class
                     # Object detected
                     center_x = int(detection[0] * width)
                     center_y = int(detection[1] * height)
@@ -66,12 +75,16 @@ class YOLODetector:
                     class_ids.append(class_id)
         
         # Apply non-maximum suppression
-        indexes = cv2.dnn.NMSBoxes(boxes, confidences, CONFIDENCE_THRESHOLD, NMS_THRESHOLD)
+        indexes = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, NMS_THRESHOLD) if boxes else []
         
         detections = []
-        if len(indexes) > 0:
-            indexes = indexes.flatten()
+        if indexes and len(indexes) > 0:
+            # Handle different return types from NMSBoxes in different OpenCV versions
+            if isinstance(indexes, np.ndarray):
+                indexes = indexes.flatten()
+            
             for i in indexes:
                 detections.append(boxes[i])
         
-        return detections
+        # Make sure we return a list, not a function
+        return list(detections)
