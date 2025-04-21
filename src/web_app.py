@@ -93,10 +93,23 @@ class VideoCamera:
                     # First try with camera index for USB cameras
                     self.video = cv2.VideoCapture(current_camera)
                     if not self.video.isOpened():
-                        # Try Pi camera module with GSTREAMER
+                        # Try different Pi camera module approaches
                         print("Trying Raspberry Pi camera module...")
-                        cam_str = "nvarguscamerasrc ! video/x-raw(memory:NVMM), width=640, height=480, format=NV12, framerate=30/1 ! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink"
-                        self.video = cv2.VideoCapture(cam_str, cv2.CAP_GSTREAMER)
+                        
+                        # Try standard Pi camera approach
+                        self.video = cv2.VideoCapture(0, cv2.CAP_V4L2)
+                        
+                        if not self.video.isOpened():
+                            # Try legacy Pi camera approach
+                            self.video = cv2.VideoCapture(0, cv2.CAP_V4L)
+                            
+                        if not self.video.isOpened():
+                            # Try GSTREAMER as a last resort
+                            try:
+                                cam_str = "v4l2src device=/dev/video0 ! video/x-raw, width=640, height=480 ! videoconvert ! appsink"
+                                self.video = cv2.VideoCapture(cam_str, cv2.CAP_GSTREAMER)
+                            except:
+                                print("GStreamer pipeline failed")
                 except Exception as e:
                     print(f"Error with Raspberry Pi camera: {str(e)}")
             else:
@@ -146,7 +159,7 @@ class VideoCamera:
         self.dx, self.dy = 5, 3
 
     def __del__(self):
-        if hasattr(self, 'video') and self.video is not None and not self.is_mock_camera:
+        if hasattr(self, 'video') and self.video is not None and (not hasattr(self, 'is_mock_camera') or not self.is_mock_camera):
             try:
                 self.video.release()
             except:
@@ -292,6 +305,14 @@ def errors():
 def generate_frames():
     while True:
         try:
+            # Make sure video_stream exists
+            if video_stream is None:
+                placeholder = create_placeholder_frame("Camera not initialized")
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
+                eventlet.sleep(1)  # Wait a bit longer before retry
+                continue
+                
             frame = video_stream.get_frame()
             if frame is not None:
                 yield (b'--frame\r\n'
@@ -301,13 +322,20 @@ def generate_frames():
                 placeholder = create_placeholder_frame("Camera not available")
                 yield (b'--frame\r\n'
                        b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
+                # Wait a bit longer between retries when there's an issue
+                eventlet.sleep(0.5)
+                continue
         except Exception as e:
-            log_message(f"Error in frame generation: {str(e)}", "error")
+            print(f"Error in frame generation: {str(e)}")
             # Create a placeholder frame with error message
             placeholder = create_placeholder_frame("Error: " + str(e))
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + placeholder + b'\r\n\r\n')
+            # Wait a bit longer between retries when there's an exception
+            eventlet.sleep(0.5)
+            continue
         
+        # Standard frame rate timing
         eventlet.sleep(0.033)  # ~30 FPS
 
 def create_placeholder_frame(message):
