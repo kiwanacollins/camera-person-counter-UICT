@@ -21,7 +21,7 @@ from flask_socketio import SocketIO, emit
 from detector.yolo import YOLODetector
 from counter.counter import PersonCounter
 from utils.visualization import draw_results
-from camera.picamera import Camera
+from camera.picamera_fixed import Camera  # Using the fixed camera implementation
 
 # Initialize Flask and SocketIO
 app = Flask(__name__)
