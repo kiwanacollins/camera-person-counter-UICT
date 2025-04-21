@@ -51,9 +51,21 @@ class YOLODetector:
             # Create blob from image
             blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
             
-            # Detect objects
+            # Detect objects - fixed implementation to handle different OpenCV versions
             self.net.setInput(blob)
-            outs = self.net.forward(self.output_layers)
+            try:
+                # Try to forward all layers at once
+                outs = self.net.forward(self.output_layers)
+            except Exception as e:
+                # Fall back to getting each layer individually if the grouped approach fails
+                print(f"Forward pass error, trying alternative: {e}")
+                outs = []
+                for layer in self.output_layers:
+                    try:
+                        out = self.net.forward(layer)
+                        outs.append(out)
+                    except Exception as layer_err:
+                        print(f"Error in layer {layer}: {layer_err}")
             
             # Initialize empty lists
             boxes = []
@@ -94,20 +106,34 @@ class YOLODetector:
                 try:
                     indexes = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, NMS_THRESHOLD)
                     
-                    # Convert indexes to proper format
-                    if isinstance(indexes, tuple):
-                        indexes = indexes[0]
-                    if isinstance(indexes, np.ndarray):
-                        indexes = indexes.flatten()
+                    # Handle different return formats across OpenCV versions
+                    if len(indexes) > 0:
+                        # OpenCV 4.5.4+ returns a single-dimensional array
+                        if isinstance(indexes, np.ndarray) and indexes.ndim == 1:
+                            pass  # Already in the right format
+                        # OpenCV 4.5.3 and earlier returns a 2D array
+                        elif isinstance(indexes, np.ndarray) and indexes.ndim == 2:
+                            indexes = indexes.flatten()
+                        # Some versions might return a tuple
+                        elif isinstance(indexes, tuple) and len(indexes) > 0:
+                            indexes = indexes[0].flatten() if isinstance(indexes[0], np.ndarray) else indexes[0]
                     
-                    # Ensure indexes is iterable
-                    if hasattr(indexes, '__iter__'):
+                    # Process the indexes safely
+                    if len(indexes) == 0:
+                        # No detections after NMS
+                        pass
+                    elif isinstance(indexes, (int, np.integer)):
+                        # Handle case where indexes might be a single integer
+                        if 0 <= indexes < len(boxes):
+                            detections.append(boxes[indexes])
+                    else:
+                        # Handle normal iterable case
                         for i in indexes:
-                            if isinstance(i, (int, np.integer)):
+                            if isinstance(i, (int, np.integer)) and 0 <= i < len(boxes):
                                 detections.append(boxes[i])
                 except Exception as e:
                     print(f"NMS failed: {e}, using all boxes")
-                    detections = boxes
+                    detections = boxes.copy()  # Use copy to avoid reference issues
             
             # Final validation
             if not isinstance(detections, list):

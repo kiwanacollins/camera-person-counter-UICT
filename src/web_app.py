@@ -215,8 +215,16 @@ class VideoCamera:
                 # Process frame stats and tracking
                 self.process_frame_stats()
                 
-                if self.is_tracking:
-                    frame = self.process_tracking(frame)
+                # Only process tracking if we have a valid frame
+                if self.is_tracking and frame is not None and frame.size > 0:
+                    try:
+                        processed_frame = self.process_tracking(frame)
+                        if processed_frame is not None:
+                            frame = processed_frame
+                    except Exception as e:
+                        print(f"Error in frame processing: {str(e)}")
+                        # Continue with original frame if tracking fails
+                        log_message(f"Error in frame tracking: {str(e)}", "error")
 
                 # Encode the frame
                 _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -251,50 +259,95 @@ class VideoCamera:
 
     def process_tracking(self, frame):
         """Process object detection and tracking on the frame"""
-        global last_log_time
+        global last_log_time, system_status
+        
+        if frame is None:
+            print("Error: Received None frame in process_tracking")
+            return frame
+            
         try:
-            with app.app_context():
-                # Measure detection time for performance monitoring
-                detect_start = datetime.now()
-                
-                # Call detect() and ensure we get a valid list back
-                try:
-                    detections = detector.detect(frame, confidence_threshold)
-                    if detections is None or callable(detections):
-                        print(f"Warning: detect() returned invalid type {type(detections)}")
+            # Measure detection time for performance monitoring
+            detect_start = datetime.now()
+            
+            # Make a deep copy of the frame to avoid OpenCV reference issues
+            try:
+                process_frame = frame.copy()
+            except Exception as e:
+                print(f"Error making frame copy: {e}")
+                return frame
+            
+            # Initialize variables with safe defaults
+            detections = []
+            count = 0
+            
+            # Call detect() with proper error handling
+            try:
+                # Validate frame before detection
+                if process_frame.size == 0 or len(process_frame.shape) != 3:
+                    print("Invalid frame dimensions for detection")
+                else:
+                    # Call detector with explicit confidence threshold
+                    detections = detector.detect(process_frame, confidence_threshold)
+                    
+                    # Ensure detections is a proper list
+                    if detections is None:
                         detections = []
+                        print("Warning: detector returned None")
                     elif not isinstance(detections, list):
                         try:
-                            # Try to convert to list if possible
                             detections = list(detections)
-                        except:
-                            print(f"Warning: could not convert {type(detections)} to list")
+                            print(f"Converted detections from {type(detections).__name__} to list")
+                        except Exception as conv_err:
+                            print(f"Could not convert detections to list: {conv_err}")
                             detections = []
-                except Exception as e:
-                    print(f"Error calling detect(): {str(e)}")
-                    detections = []
-                
-                # Update counter with detections
-                try:
+            except Exception as det_err:
+                print(f"Detection error: {det_err}")
+                detections = []
+            
+            # Update counter with validated detections list
+            try:
+                if isinstance(detections, list):
                     count = counter.update(detections)
-                except Exception as e:
-                    print(f"Error updating counter: {str(e)}")
+                else:
                     count = 0
-                
-                # Draw results on frame
-                try:
-                    frame = draw_results(frame, detections, count)
-                except Exception as e:
-                    print(f"Error drawing results: {str(e)}")
-                
-                detect_time = (datetime.now() - detect_start).total_seconds() * 1000
+            except Exception as counter_err:
+                print(f"Counter update error: {counter_err}")
+                count = 0
+            
+            # Draw results on frame with error handling
+            result_frame = process_frame
+            try:
+                result_frame = draw_results(process_frame, detections, count)
+            except Exception as draw_err:
+                print(f"Error drawing results: {draw_err}")
+            
+            # Update stats with tracking data
+            detect_time = (datetime.now() - detect_start).total_seconds() * 1000
+            try:
                 self.update_stats(count, detect_time)
-                
-                # Log based on frequency settings if enabled
-                current_time = datetime.now()
-                if logging_enabled and (current_time - last_log_time).total_seconds() >= log_frequency:
+            except Exception as stats_err:
+                print(f"Error updating stats: {stats_err}")
+            
+            # Log count based on frequency settings
+            current_time = datetime.now()
+            if logging_enabled and (current_time - last_log_time).total_seconds() >= log_frequency:
+                try:
                     log_message(f"Current count: {count} people detected", "info")
                     last_log_time = current_time
+                except Exception as log_err:
+                    print(f"Error logging count: {log_err}")
+                    
+            return result_frame
+                    
+        except Exception as e:
+            print(f"Error in frame processing: {str(e)}")
+            system_status = "error"
+            try:
+                log_message(f"Error during frame processing: {str(e)}", "error")
+            except:
+                pass
+            # Return original frame if processing failed
+            return frame
                     
         except Exception as e:
             log_message(f"Error during detection: {str(e)}", "error")
