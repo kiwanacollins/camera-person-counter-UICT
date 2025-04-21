@@ -2,6 +2,8 @@ import cv2
 import numpy as np
 import sys
 import os
+# Import Sequence for type hinting
+from collections.abc import Sequence 
 
 # Add project root to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -20,14 +22,31 @@ class YOLODetector:
             self.classes = [line.strip() for line in f.readlines()]
         
         self.layer_names = self.net.getLayerNames()
-        output_layers_indices = self.net.getUnconnectedOutLayers()
         
-        # Fix for OpenCV versions compatibility
-        if isinstance(output_layers_indices[0], np.ndarray):
-            self.output_layers = [self.layer_names[i[0] - 1] for i in output_layers_indices]
-        else:
-            self.output_layers = [self.layer_names[i - 1] for i in output_layers_indices]
-        
+        # Robustly get output layer names regardless of OpenCV version
+        try:
+            output_layers_indices = self.net.getUnconnectedOutLayers()
+            # Case 1: Indices are wrapped in a NumPy array (e.g., [[200], [227]])
+            if isinstance(output_layers_indices, np.ndarray) and output_layers_indices.ndim > 1:
+                 self.output_layers = [self.layer_names[i[0] - 1] for i in output_layers_indices]
+            # Case 2: Indices are plain integers in a list or tuple (e.g., (200, 227))
+            elif isinstance(output_layers_indices, (list, tuple)):
+                 self.output_layers = [self.layer_names[i - 1] for i in output_layers_indices]
+            # Case 3: A single integer index is returned
+            elif isinstance(output_layers_indices, int):
+                 self.output_layers = [self.layer_names[output_layers_indices - 1]]
+            else:
+                 # Fallback or error handling if the format is unexpected
+                 print(f"Warning: Unexpected format for getUnconnectedOutLayers(): {type(output_layers_indices)}. Attempting default.")
+                 # Attempt a common default if unsure (may need adjustment)
+                 self.output_layers = [self.layer_names[i - 1] for i in self.net.getUnconnectedOutLayers()]
+
+        except Exception as e:
+            print(f"Error determining output layers: {e}. Falling back to manual specification (may be incorrect).")
+            # Provide a fallback if auto-detection fails completely
+            # These might need adjustment based on the specific yolov4-tiny version
+            self.output_layers = ['yolo_30', 'yolo_37'] 
+
     def detect(self, frame, confidence_threshold=None):
         """
         Detect objects in the given frame
@@ -101,40 +120,50 @@ class YOLODetector:
                         confidences.append(confidence)
                         class_ids.append(class_id)
             
-            # Apply non-maximum suppression if we have detections
-            if len(boxes) > 0:
-                try:
-                    indexes = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, NMS_THRESHOLD)
-                    
-                    # Handle different return formats across OpenCV versions
-                    if len(indexes) > 0:
-                        # OpenCV 4.5.4+ returns a single-dimensional array
-                        if isinstance(indexes, np.ndarray) and indexes.ndim == 1:
-                            pass  # Already in the right format
-                        # OpenCV 4.5.3 and earlier returns a 2D array
-                        elif isinstance(indexes, np.ndarray) and indexes.ndim == 2:
-                            indexes = indexes.flatten()
-                        # Some versions might return a tuple
-                        elif isinstance(indexes, tuple) and len(indexes) > 0:
-                            indexes = indexes[0].flatten() if isinstance(indexes[0], np.ndarray) else indexes[0]
-                    
-                    # Process the indexes safely
-                    if len(indexes) == 0:
-                        # No detections after NMS
-                        pass
-                    elif isinstance(indexes, (int, np.integer)):
-                        # Handle case where indexes might be a single integer
-                        if 0 <= indexes < len(boxes):
-                            detections.append(boxes[indexes])
-                    else:
-                        # Handle normal iterable case
-                        for i in indexes:
-                            if isinstance(i, (int, np.integer)) and 0 <= i < len(boxes):
-                                detections.append(boxes[i])
-                except Exception as e:
-                    print(f"NMS failed: {e}, using all boxes")
-                    detections = boxes.copy()  # Use copy to avoid reference issues
+            # Apply non-maximum suppression with instance threshold
+            # Ensure boxes and confidences are lists before passing to NMSBoxes
+            if not isinstance(boxes, list): boxes = []
+            if not isinstance(confidences, list): confidences = []
             
+            # Use the instance's NMS threshold
+            nms_threshold = NMS_THRESHOLD 
+
+            # Call NMSBoxes
+            indexes = cv2.dnn.NMSBoxes(boxes, confidences, confidence_threshold, nms_threshold)
+
+            detections = []
+            # Check if indexes is not None and has items before processing
+            # Handle tuple return type from NMSBoxes in some OpenCV versions
+            if indexes is not None:
+                 # Flatten if it's a multi-dimensional array
+                 if isinstance(indexes, np.ndarray) and indexes.ndim > 1:
+                     indexes_flat = indexes.flatten()
+                 # Handle tuple case (often means empty result)
+                 elif isinstance(indexes, tuple):
+                     # If the tuple is not empty, assume it contains indices
+                     if len(indexes) > 0:
+                         indexes_flat = list(indexes) 
+                     else:
+                         indexes_flat = [] # Empty tuple means no boxes survived NMS
+                 # Handle flat list/array case
+                 elif isinstance(indexes, (list, np.ndarray)):
+                      indexes_flat = indexes
+                 # Handle single integer case (less common but possible)
+                 elif isinstance(indexes, int):
+                      indexes_flat = [indexes]
+                 else:
+                      print(f"Warning: Unexpected type for NMSBoxes result: {type(indexes)}")
+                      indexes_flat = []
+
+                 # Process the flattened indices
+                 if len(indexes_flat) > 0:
+                     for i in indexes_flat:
+                         # Add bounds check for safety
+                         if 0 <= i < len(boxes):
+                             detections.append(boxes[i])
+                         else:
+                             print(f"Warning: NMS index {i} out of bounds for boxes list (len={len(boxes)})")
+
             # Final validation
             if not isinstance(detections, list):
                 print(f"Warning: detections is type {type(detections)}, converting to list")
@@ -143,8 +172,8 @@ class YOLODetector:
                 except:
                     detections = []
             
-            return detections
-            
+            return detections # Returns the list
         except Exception as e:
-            print(f"Error in detect(): {e}")
-            return []  # Always return a list, even on error
+            print(f"Error in YOLODetector.detect: {e}")
+            # Explicitly return empty list on error
+            return []
