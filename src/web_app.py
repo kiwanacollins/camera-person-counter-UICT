@@ -29,47 +29,119 @@ with app.app_context():
     counter = PersonCounter()
     sensitivity = "Medium"
     current_camera = 0
+    frame_width = 640
+    frame_height = 480
+    frame_rate = 30
+    confidence_threshold = 0.5
+    logging_enabled = True
+    log_frequency = 60  # in seconds
+    log_events = True
+    log_errors = True
+    last_log_time = datetime.now()
+    system_status = "normal"  # normal, warning, or error
     stats = {
         "current_count": 0,
         "average": 0,
         "minimum": 0,
         "peak": 0,
-        "total_counts": []
+        "total_counts": [],
+        "frame_rate": 0,
+        "detection_time": 0,
+        "system_load": 0
     }
     logs = []
+    errors = []
 
 class VideoCamera:
     def __init__(self):
         self.video = cv2.VideoCapture(current_camera)
-        self.video.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        self.video.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        self.video.set(cv2.CAP_PROP_FPS, 30)
+        self.video.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
+        self.video.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
+        self.video.set(cv2.CAP_PROP_FPS, frame_rate)
         self.lock = eventlet.semaphore.Semaphore()  # Use eventlet's semaphore
         self.is_tracking = False
+        self.frame_count = 0
+        self.fps_start_time = datetime.now()
+        self.actual_fps = 0
+        self.last_error_check = datetime.now()
 
     def __del__(self):
         self.video.release()
 
     def get_frame(self):
+        global system_status, last_log_time
+        
         with self.lock:
+            # Check camera status
             success, frame = self.video.read()
             if not success:
+                log_message("Error: Failed to read frame from camera", "error")
+                system_status = "error"
                 return None
 
+            start_time = datetime.now()
+            self.frame_count += 1
+            current_time = datetime.now()
+            
+            # Calculate actual FPS every second
+            time_diff = (current_time - self.fps_start_time).total_seconds()
+            if time_diff >= 1.0:
+                self.actual_fps = self.frame_count / time_diff
+                stats["frame_rate"] = round(self.actual_fps, 1)
+                self.frame_count = 0
+                self.fps_start_time = current_time
+                
+                # Check if frame rate is too low (possible performance issue)
+                if self.actual_fps < (frame_rate * 0.7) and self.actual_fps > 0:
+                    log_message(f"Warning: Low frame rate detected ({self.actual_fps:.1f} FPS)", "warning")
+                    system_status = "warning"
+
             if self.is_tracking:
-                with app.app_context():
-                    detections = detector.detect(frame)
-                    count = counter.update(detections)
-                    frame = draw_results(frame, detections, count)
-                    
-                    # Update statistics
-                    stats["current_count"] = count
-                    stats["total_counts"].append(count)
-                    stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"])
-                    stats["minimum"] = min(stats["total_counts"])
-                    stats["peak"] = max(stats["total_counts"])
-                    
-                    socketio.emit('stats_update', stats)
+                try:
+                    with app.app_context():
+                        # Measure detection time for performance monitoring
+                        detect_start = datetime.now()
+                        detections = detector.detect(frame, confidence_threshold)
+                        count = counter.update(detections)
+                        frame = draw_results(frame, detections, count)
+                        detect_time = (datetime.now() - detect_start).total_seconds() * 1000  # in milliseconds
+                        stats["detection_time"] = round(detect_time, 1)
+                        
+                        # Update statistics
+                        stats["current_count"] = count
+                        stats["total_counts"].append(count)
+                        stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"])
+                        stats["minimum"] = min(stats["total_counts"])
+                        stats["peak"] = max(stats["total_counts"])
+                        
+                        # Add system load (CPU usage would go here in a real implementation)
+                        stats["system_load"] = min(90, stats["detection_time"] / 10)  # Simplified for demo
+                        
+                        # Log based on frequency settings if enabled
+                        if logging_enabled and (current_time - last_log_time).total_seconds() >= log_frequency:
+                            log_message(f"Current count: {count} people detected", "info")
+                            last_log_time = current_time
+                        
+                        socketio.emit('stats_update', stats)
+                except Exception as e:
+                    log_message(f"Error during detection: {str(e)}", "error")
+                    system_status = "error"
+
+            # Check for potential errors every 5 seconds
+            if (current_time - self.last_error_check).total_seconds() >= 5:
+                self.last_error_check = current_time
+                
+                # Check if camera resolution is as expected
+                actual_width = self.video.get(cv2.CAP_PROP_FRAME_WIDTH)
+                actual_height = self.video.get(cv2.CAP_PROP_FRAME_HEIGHT)
+                if actual_width != frame_width or actual_height != frame_height:
+                    log_message(f"Warning: Camera resolution mismatch. Expected: {frame_width}x{frame_height}, Got: {actual_width}x{actual_height}", "warning")
+                    system_status = "warning"
+                
+                # Example of auto-recovery (this could be expanded in a real system)
+                if stats["system_load"] > 80:
+                    log_message("Warning: High system load detected", "warning")
+                    system_status = "warning"
 
             # Encode the frame
             _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
@@ -134,16 +206,44 @@ def handle_sensitivity(data):
 # System Configuration handlers
 @socketio.on('update_config')
 def handle_config_update(config):
-    global sensitivity, current_camera
+    global sensitivity, current_camera, frame_width, frame_height, frame_rate
+    global confidence_threshold, logging_enabled, log_frequency, log_events, log_errors
+    
     try:
         # Update camera settings
-        camera_id = int(config['camera']['id'])
-        if camera_id != current_camera:
-            current_camera = camera_id
-            global video_stream
-            if video_stream:
-                del video_stream
-            video_stream = VideoCamera()
+        if 'camera' in config:
+            camera_id = int(config['camera']['id'])
+            camera_changed = False
+            
+            # Check if we need to update camera
+            if camera_id != current_camera:
+                current_camera = camera_id
+                camera_changed = True
+                
+            # Update resolution if provided
+            if 'resolution' in config['camera']:
+                resolution = config['camera']['resolution'].split('x')
+                new_width = int(resolution[0])
+                new_height = int(resolution[1])
+                if new_width != frame_width or new_height != frame_height:
+                    frame_width = new_width
+                    frame_height = new_height
+                    camera_changed = True
+                    
+            # Update frame rate if provided
+            if 'frameRate' in config['camera']:
+                new_frame_rate = int(config['camera']['frameRate'])
+                if new_frame_rate != frame_rate:
+                    frame_rate = new_frame_rate
+                    camera_changed = True
+                    
+            # Recreate the video stream if camera settings changed
+            if camera_changed:
+                global video_stream
+                if video_stream:
+                    del video_stream
+                video_stream = VideoCamera()
+                log_message(f"Camera configuration updated: Camera {current_camera}, {frame_width}x{frame_height} @ {frame_rate}fps", "info")
             
         # Update detection settings
         if 'detection' in config:
@@ -152,14 +252,40 @@ def handle_config_update(config):
                 "2": "Medium", 
                 "3": "High"
             }
+            
             if 'sensitivity' in config['detection'] and str(config['detection']['sensitivity']) in sensitivity_map:
-                sensitivity = sensitivity_map[str(config['detection']['sensitivity'])]
+                new_sensitivity = sensitivity_map[str(config['detection']['sensitivity'])]
+                if new_sensitivity != sensitivity:
+                    sensitivity = new_sensitivity
+                    log_message(f"Detection sensitivity set to {sensitivity}", "info")
+            
+            if 'confidenceThreshold' in config['detection']:
+                new_threshold = float(config['detection']['confidenceThreshold']) / 100.0  # Convert from percentage
+                if new_threshold != confidence_threshold:
+                    confidence_threshold = new_threshold
+                    log_message(f"Detection confidence threshold set to {confidence_threshold:.2f}", "info")
         
-        # Log the configuration update
-        log_message(f"System configuration updated")
+        # Update logging preferences
+        if 'logging' in config:
+            if 'enabled' in config['logging']:
+                logging_enabled = bool(config['logging']['enabled'])
+                
+            if 'frequency' in config['logging']:
+                log_frequency = int(config['logging']['frequency'])
+                
+            if 'logEvents' in config['logging']:
+                log_events = bool(config['logging']['logEvents'])
+                
+            if 'logErrors' in config['logging']:
+                log_errors = bool(config['logging']['logErrors'])
+                
+            log_message(f"Logging preferences updated: enabled={logging_enabled}, frequency={log_frequency}s", "info")
+        
+        # Log the overall configuration update
+        log_message(f"System configuration updated successfully", "info")
         return {'success': True, 'message': 'Configuration updated successfully'}
     except Exception as e:
-        log_message(f"Error updating configuration: {str(e)}")
+        log_message(f"Error updating configuration: {str(e)}", "error")
         return {'success': False, 'message': f'Error: {str(e)}'}
 
 @socketio.on('test_camera')
@@ -240,12 +366,90 @@ def handle_fix_error(data):
         log_message(f"Error during fix attempt: {str(e)}")
         return {'success': False, 'message': f'Error: {str(e)}'}
 
-def log_message(message):
-    logs.append({
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "message": message
-    })
-    socketio.emit('log_update', logs[-1])
+def log_message(message, level="info"):
+    """
+    Enhanced logging function that tracks message level and updates error tracking.
+    
+    Args:
+        message: The message to log
+        level: The level of the message (info, warning, error)
+    """
+    global system_status
+    
+    # Create timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Create log entry
+    log_entry = {
+        "timestamp": timestamp,
+        "message": message,
+        "level": level,
+        "count": stats["current_count"]
+    }
+    
+    # Only log if enabled or if it's an error (errors are always logged)
+    if logging_enabled or level == "error":
+        logs.append(log_entry)
+        
+        # Limit logs to prevent memory issues (keep last 1000 logs)
+        if len(logs) > 1000:
+            logs.pop(0)
+            
+        # Emit log update
+        socketio.emit('log_update', log_entry)
+    
+    # Handle error tracking
+    if level == "error" and log_errors:
+        error_entry = {
+            "id": len(errors) + 1,
+            "timestamp": timestamp,
+            "title": message.split(":")[0] if ":" in message else "System Error",
+            "message": message,
+            "severity": "high",
+            "status": "active",
+            "source": detect_error_source(message),
+            "details": {
+                "count": stats["current_count"],
+                "frame_rate": stats["frame_rate"],
+                "system_load": stats["system_load"]
+            }
+        }
+        errors.append(error_entry)
+        system_status = "error"
+        socketio.emit('new_error', error_entry)
+    elif level == "warning" and log_errors:
+        error_entry = {
+            "id": len(errors) + 1,
+            "timestamp": timestamp,
+            "title": message.split(":")[0] if ":" in message else "System Warning",
+            "message": message,
+            "severity": "medium",
+            "status": "active",
+            "source": detect_error_source(message),
+            "details": {
+                "count": stats["current_count"],
+                "frame_rate": stats["frame_rate"],
+                "system_load": stats["system_load"]
+            }
+        }
+        errors.append(error_entry)
+        if system_status != "error":  # Don't downgrade from error to warning
+            system_status = "warning"
+        socketio.emit('new_error', error_entry)
+
+def detect_error_source(message):
+    """
+    Determine the source of an error based on the message content.
+    """
+    message = message.lower()
+    if "camera" in message:
+        return "camera"
+    elif "detect" in message:
+        return "detection"
+    elif "frame" in message or "fps" in message:
+        return "system"
+    else:
+        return "system"
 
 # Ensure camera is released when the application stops
 def cleanup():
