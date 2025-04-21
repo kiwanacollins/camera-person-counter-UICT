@@ -81,6 +81,10 @@ video_stream = VideoCamera()
 def index():
     return render_template('index.html')
 
+@app.route('/dashboard')
+def dashboard():
+    return render_template('dashboard.html')
+
 def generate_frames():
     while True:
         frame = video_stream.get_frame()
