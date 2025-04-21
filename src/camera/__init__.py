@@ -1,0 +1,1 @@
+# The file /camera-person-counter/camera-person-counter/src/camera/__init__.py is intentionally left blank.
