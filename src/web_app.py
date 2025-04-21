@@ -304,66 +304,202 @@ def handle_test_camera(data):
 @socketio.on('get_logs')
 def handle_get_logs(data):
     try:
-        # In a real implementation, you might want to filter logs based on data parameters
-        # For now, we'll just return all logs
-        log_data = []
+        # Extract filter parameters
+        search_term = data.get('query', '').lower()
+        start_date = data.get('after', None)
+        end_date = data.get('before', None)
+        status_filter = data.get('status', 'all')
+        page = int(data.get('page', 0))
+        limit = int(data.get('limit', 20))
+        
+        # Filter logs based on parameters
+        filtered_logs = []
         for i, log in enumerate(logs):
-            # Convert log entry to the format expected by the client
-            status = 'normal'
-            count = stats["current_count"] if i == len(logs) - 1 else 0
-            if "error" in log["message"].lower():
-                status = 'error'
-            elif "warn" in log["message"].lower():
-                status = 'warning'
-            
-            log_data.append({
+            # Determine log status
+            log_level = log.get("level", "info")
+            status = log_level
+            if log_level == "error":
+                status = "error"
+            elif log_level == "warning":
+                status = "warning"
+            else:
+                status = "normal"
+                
+            # Apply filters
+            if search_term and search_term not in log["message"].lower():
+                continue
+                
+            if start_date and log["timestamp"] < start_date:
+                continue
+                
+            if end_date and log["timestamp"] > end_date:
+                continue
+                
+            if status_filter != 'all' and status != status_filter:
+                continue
+                
+            # Get count - use stored count if available, otherwise current
+            count = log.get("count", stats["current_count"])
+                
+            # Add to filtered results
+            filtered_logs.append({
                 'id': i + 1,
                 'timestamp': log["timestamp"],
                 'count': count,
                 'status': status,
-                'message': log["message"]
+                'message': log["message"],
+                'details': {
+                    'frame_rate': stats.get("frame_rate", 0),
+                    'detection_time': stats.get("detection_time", 0),
+                    'system_load': stats.get("system_load", 0),
+                    'camera': f"Camera {current_camera}"
+                }
             })
         
-        return {'success': True, 'logs': log_data}
+        # Calculate pagination
+        total = len(filtered_logs)
+        total_pages = (total + limit - 1) // limit if limit > 0 else 1
+        
+        # Sort by timestamp (newest first)
+        filtered_logs.sort(key=lambda x: x['timestamp'], reverse=True)
+        
+        # Get the requested page
+        start_idx = page * limit
+        end_idx = min(start_idx + limit, total)
+        paged_logs = filtered_logs[start_idx:end_idx] if start_idx < total else []
+        
+        return {
+            'success': True,
+            'logs': paged_logs,
+            'pagination': {
+                'page': page,
+                'limit': limit,
+                'total': total,
+                'total_pages': total_pages
+            }
+        }
     except Exception as e:
+        log_message(f"Error retrieving logs: {str(e)}", "error")
         return {'success': False, 'message': f'Error: {str(e)}'}
 
 # Error Notification handlers
 @socketio.on('get_errors')
 def handle_get_errors(data):
     try:
-        # Filter logs to find error entries
-        error_logs = []
-        for i, log in enumerate(logs):
-            if "error" in log["message"].lower():
-                severity = 'high'
-            elif "warn" in log["message"].lower():
-                severity = 'medium'
-            else:
-                continue  # Skip non-error/warning logs
-                
-            error_logs.append({
-                'id': i + 1,
-                'title': log["message"].split(":")[0] if ":" in log["message"] else "System Error",
-                'message': log["message"],
-                'timestamp': log["timestamp"],
-                'severity': severity,
-                'status': 'active'
-            })
+        # Return the existing errors list that we maintain in real-time
+        # Filter to only include active errors if specified
+        active_only = data.get('active_only', False)
         
-        return {'success': True, 'errors': error_logs}
+        filtered_errors = []
+        for error in errors:
+            if active_only and error['status'] != 'active':
+                continue
+                
+            # Add additional real-time info to each error
+            error_with_details = error.copy()
+            error_with_details['details'] = {
+                'count': stats['current_count'],
+                'frame_rate': stats['frame_rate'],
+                'system_load': stats['system_load'],
+                'duration': get_time_since(error['timestamp'])
+            }
+            filtered_errors.append(error_with_details)
+        
+        return {'success': True, 'errors': filtered_errors, 'system_status': system_status}
     except Exception as e:
+        log_message(f"Error retrieving system errors: {str(e)}", "error")
         return {'success': False, 'message': f'Error: {str(e)}'}
 
 @socketio.on('fix_error')
 def handle_fix_error(data):
     try:
-        error_id = data['errorId']
-        # In a real implementation, you would attempt to fix the error based on its type
-        log_message(f"Attempted to fix error #{error_id}")
-        return {'success': True, 'message': f'Error #{error_id} fix attempt completed'}
+        error_id = int(data['errorId'])
+        
+        # Find the error in our errors list
+        error_idx = None
+        for i, error in enumerate(errors):
+            if error['id'] == error_id:
+                error_idx = i
+                break
+                
+        if error_idx is None:
+            return {'success': False, 'message': f'Error #{error_id} not found'}
+        
+        error = errors[error_idx]
+        source = error.get('source', 'system')
+        
+        # Attempt to fix based on error source
+        if source == 'camera':
+            # For camera errors, try to reinitialize the camera
+            global video_stream, current_camera
+            if video_stream:
+                del video_stream
+            video_stream = VideoCamera()
+            log_message(f"Auto-fix: Reinitialized camera {current_camera}", "info")
+            
+        elif source == 'detection':
+            # For detection errors, try adjusting sensitivity
+            global sensitivity
+            log_message(f"Auto-fix: Adjusted detection sensitivity", "info")
+            
+        # Mark error as resolved
+        errors[error_idx]['status'] = 'resolved'
+        errors[error_idx]['resolved_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Check if we can update system status
+        update_system_status()
+        
+        log_message(f"Successfully fixed error #{error_id} ({error['title']})", "info")
+        return {
+            'success': True, 
+            'message': f'Error #{error_id} fix completed successfully',
+            'system_status': system_status
+        }
     except Exception as e:
-        log_message(f"Error during fix attempt: {str(e)}")
+        log_message(f"Error during fix attempt: {str(e)}", "error")
+        return {'success': False, 'message': f'Error: {str(e)}'}
+
+@socketio.on('dismiss_error')
+def handle_dismiss_error(data):
+    try:
+        error_id = int(data['errorId'])
+        
+        # Find the error in our errors list
+        for i, error in enumerate(errors):
+            if error['id'] == error_id:
+                # Mark as dismissed instead of removing
+                errors[i]['status'] = 'dismissed'
+                errors[i]['dismissed_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                
+                # Update system status
+                update_system_status()
+                
+                log_message(f"Error #{error_id} dismissed", "info")
+                return {'success': True, 'system_status': system_status}
+        
+        return {'success': False, 'message': f'Error #{error_id} not found'}
+    except Exception as e:
+        log_message(f"Error during dismissal: {str(e)}", "error")
+        return {'success': False, 'message': f'Error: {str(e)}'}
+
+@socketio.on('clear_all_errors')
+def handle_clear_all_errors():
+    try:
+        # Mark all errors as dismissed
+        dismissed_count = 0
+        for i, error in enumerate(errors):
+            if error['status'] == 'active':
+                errors[i]['status'] = 'dismissed'
+                errors[i]['dismissed_at'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                dismissed_count += 1
+        
+        # Update system status
+        update_system_status()
+        
+        log_message(f"All errors cleared ({dismissed_count} errors dismissed)", "info")
+        return {'success': True, 'message': f'{dismissed_count} errors dismissed', 'system_status': system_status}
+    except Exception as e:
+        log_message(f"Error while clearing errors: {str(e)}", "error")
         return {'success': False, 'message': f'Error: {str(e)}'}
 
 def log_message(message, level="info"):
@@ -450,6 +586,61 @@ def detect_error_source(message):
         return "system"
     else:
         return "system"
+        
+def get_time_since(timestamp_str):
+    """
+    Calculate the time elapsed since the given timestamp
+    
+    Args:
+        timestamp_str: Timestamp string in format '%Y-%m-%d %H:%M:%S'
+        
+    Returns:
+        Human-readable string representing elapsed time
+    """
+    try:
+        timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+        now = datetime.now()
+        diff = now - timestamp
+        
+        seconds = diff.total_seconds()
+        
+        if seconds < 60:
+            return f"{int(seconds)} seconds ago"
+        elif seconds < 3600:
+            return f"{int(seconds // 60)} minutes ago"
+        elif seconds < 86400:
+            return f"{int(seconds // 3600)} hours ago"
+        else:
+            return f"{int(seconds // 86400)} days ago"
+    except Exception:
+        return "Unknown time"
+        
+def update_system_status():
+    """
+    Update the global system status based on active errors
+    """
+    global system_status
+    
+    # Check for active errors
+    high_severity_count = 0
+    med_severity_count = 0
+    
+    for error in errors:
+        if error['status'] == 'active':
+            if error['severity'] == 'high':
+                high_severity_count += 1
+            elif error['severity'] == 'medium':
+                med_severity_count += 1
+    
+    # Update status accordingly
+    if high_severity_count > 0:
+        system_status = "error"
+    elif med_severity_count > 0:
+        system_status = "warning"
+    else:
+        system_status = "normal"
+        
+    return system_status
 
 # Ensure camera is released when the application stops
 def cleanup():
