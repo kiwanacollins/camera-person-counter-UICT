@@ -15,31 +15,57 @@ class Camera:
         devices = glob.glob('/dev/video*')
         print(f"Found video devices: {devices}")
         
-        for device in devices:
+        # Prioritize video0 as it's usually the main camera
+        primary_device = '/dev/video0'
+        if primary_device in devices:
+            try:
+                # Try opening the primary camera device first
+                cap = cv2.VideoCapture(0)
+                if cap.isOpened():
+                    ret, frame = cap.read()
+                    if ret and frame is not None:
+                        available_cameras.append(primary_device)
+                        print(f"Successfully opened camera {primary_device}")
+                    cap.release()
+                    # Return immediately if we found the primary camera
+                    if available_cameras:
+                        return available_cameras
+            except Exception as e:
+                print(f"Could not open primary camera: {str(e)}")
+        
+        # Check a few other devices if primary camera wasn't found
+        for device in devices[:3]:  # Only try the first 3 devices
+            if device == primary_device or device in available_cameras:
+                continue
+                
             try:
                 # Get device number
                 device_num = int(device.replace('/dev/video', ''))
                 
-                # Try opening with device number first
-                cap = cv2.VideoCapture(device_num)
-                if cap.isOpened():
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        available_cameras.append(device)
-                        print(f"Successfully opened camera {device}")
-                    cap.release()
-                    continue
+                # Try opening with device number, suppress OpenCV warnings
+                original_stdout = os.dup(1)
+                original_stderr = os.dup(2)
+                null_fd = os.open(os.devnull, os.O_RDWR)
+                os.dup2(null_fd, 1)
+                os.dup2(null_fd, 2)
                 
-                # If that fails, try opening with device path
-                cap = cv2.VideoCapture(device)
-                if cap.isOpened():
-                    ret, frame = cap.read()
-                    if ret and frame is not None:
-                        available_cameras.append(device)
-                        print(f"Successfully opened camera {device}")
+                try:
+                    cap = cv2.VideoCapture(device_num)
+                    if cap.isOpened():
+                        ret, frame = cap.read()
+                        if ret and frame is not None:
+                            available_cameras.append(device)
                     cap.release()
-            except Exception as e:
-                print(f"Error testing device {device}: {str(e)}")
+                finally:
+                    # Restore stdout/stderr
+                    os.dup2(original_stdout, 1)
+                    os.dup2(original_stderr, 2)
+                    os.close(null_fd)
+                
+                if device in available_cameras:
+                    print(f"Successfully opened camera {device}")
+            except Exception:
+                # Silently ignore errors for non-primary cameras
                 continue
         
         if not available_cameras:
