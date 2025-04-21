@@ -87,6 +87,18 @@ class VideoCamera:
                             break
                     except:
                         continue
+            # For Raspberry Pi, use the Pi camera module if available
+            elif sys.platform == 'linux':
+                try:
+                    # First try with camera index for USB cameras
+                    self.video = cv2.VideoCapture(current_camera)
+                    if not self.video.isOpened():
+                        # Try Pi camera module with GSTREAMER
+                        print("Trying Raspberry Pi camera module...")
+                        cam_str = "nvarguscamerasrc ! video/x-raw(memory:NVMM), width=640, height=480, format=NV12, framerate=30/1 ! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! video/x-raw, format=BGR ! appsink"
+                        self.video = cv2.VideoCapture(cam_str, cv2.CAP_GSTREAMER)
+                except Exception as e:
+                    print(f"Error with Raspberry Pi camera: {str(e)}")
             else:
                 # Standard approach for other platforms
                 self.video = cv2.VideoCapture(current_camera)
@@ -134,7 +146,11 @@ class VideoCamera:
         self.dx, self.dy = 5, 3
 
     def __del__(self):
-        self.video.release()
+        if hasattr(self, 'video') and self.video is not None and not self.is_mock_camera:
+            try:
+                self.video.release()
+            except:
+                pass
 
     def get_frame(self):
         global system_status, last_log_time
@@ -158,17 +174,30 @@ class VideoCamera:
             else:
                 # Real camera - check status
                 try:
+                    # Make sure camera is still open
+                    if self.video is None or not self.video.isOpened():
+                        print("Camera is closed, attempting to reconnect...")
+                        self.connect_camera()
+                        if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
+                            # If we're now in mock camera mode, restart the function
+                            return self.get_frame()
+                        
+                    # Read a frame from the camera
                     success, frame = self.video.read()
                     if not success or frame is None:
                         print("Failed to read frame from camera")
                         log_message("Error: Failed to read frame from camera", "error")
                         system_status = "error"
-                        return None
+                        # Fall back to mock camera instead of returning None
+                        self.setup_mock_camera()
+                        return self.get_frame()
                 except Exception as e:
                     print(f"Exception reading frame: {str(e)}")
                     log_message(f"Error reading camera frame: {str(e)}", "error")
                     system_status = "error"
-                    return None
+                    # Fall back to mock camera
+                    self.setup_mock_camera()
+                    return self.get_frame()
 
             start_time = datetime.now()
             self.frame_count += 1
@@ -309,8 +338,14 @@ def video_feed():
             video_stream = VideoCamera()
         
         # Print debug info to server console
-        print(f"Video feed requested. Camera status: {'OK' if video_stream and video_stream.video and video_stream.video.isOpened() else 'NOT READY'}")
+        print(f"Video feed requested. Camera status: {'OK' if video_stream and hasattr(video_stream, 'video') and video_stream.video and video_stream.video.isOpened() else 'Using mock camera' if hasattr(video_stream, 'is_mock_camera') and video_stream.is_mock_camera else 'NOT READY'}")
             
+        # Force a camera reconnection if needed - helps with Raspberry Pi camera issues
+        if not hasattr(video_stream, 'is_mock_camera') or not video_stream.is_mock_camera:
+            if not hasattr(video_stream, 'video') or not video_stream.video or not video_stream.video.isOpened():
+                print("Camera not properly initialized, attempting to reconnect...")
+                video_stream.connect_camera()
+        
         return Response(generate_frames(),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     except Exception as e:
