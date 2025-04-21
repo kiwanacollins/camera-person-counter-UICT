@@ -235,6 +235,9 @@ class VideoCamera:
                         # Measure detection time for performance monitoring
                         detect_start = datetime.now()
                         detections = detector.detect(frame, confidence_threshold)
+                        # Make sure detections is actually a list before passing it to the counter
+                        if not isinstance(detections, list):
+                            detections = []
                         count = counter.update(detections)
                         frame = draw_results(frame, detections, count)
                         detect_time = (datetime.now() - detect_start).total_seconds() * 1000  # in milliseconds
@@ -242,10 +245,12 @@ class VideoCamera:
                         
                         # Update statistics
                         stats["current_count"] = count
+                        if "total_counts" not in stats:
+                            stats["total_counts"] = []
                         stats["total_counts"].append(count)
-                        stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"])
-                        stats["minimum"] = min(stats["total_counts"])
-                        stats["peak"] = max(stats["total_counts"])
+                        stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"]) if len(stats["total_counts"]) > 0 else 0
+                        stats["minimum"] = min(stats["total_counts"]) if len(stats["total_counts"]) > 0 else 0
+                        stats["peak"] = max(stats["total_counts"]) if len(stats["total_counts"]) > 0 else 0
                         
                         # Add system load (CPU usage would go here in a real implementation)
                         stats["system_load"] = min(90, stats["detection_time"] / 10)  # Simplified for demo
