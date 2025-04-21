@@ -19,7 +19,8 @@ from counter.counter import PersonCounter
 from utils.visualization import draw_results
 
 # Initialize Flask and SocketIO
-app = Flask(__name__)
+app = Flask(__name__, 
+           template_folder='templates')  # Explicitly set the template folder
 app.config['SECRET_KEY'] = 'secret!'  # Add a secret key
 socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins='*')
 
