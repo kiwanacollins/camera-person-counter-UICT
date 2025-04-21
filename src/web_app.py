@@ -9,6 +9,8 @@ import base64
 import json
 import threading
 import os
+import sys
+import atexit
 from datetime import datetime
 
 # Flask and SocketIO imports
@@ -72,10 +74,35 @@ class VideoCamera:
         """Try to establish camera connection with retry logic"""
         # Try to open camera - with fallback to default camera 0 if specified one fails
         try:
-            self.video = cv2.VideoCapture(current_camera)
-            if not self.video.isOpened():
+            print(f"Attempting to connect to camera {current_camera}")
+            
+            # On macOS, try a special approach for camera access
+            if sys.platform == 'darwin':
+                # For macOS, we might need to try both 0 and 1
+                for cam_id in [current_camera, 0, 1]:
+                    try:
+                        self.video = cv2.VideoCapture(cam_id)
+                        if self.video.isOpened():
+                            print(f"Successfully opened camera {cam_id}")
+                            break
+                    except:
+                        continue
+            else:
+                # Standard approach for other platforms
+                self.video = cv2.VideoCapture(current_camera)
+            
+            # If camera still not opened, try the default
+            if not self.video or not self.video.isOpened():
+                print(f"Failed to open camera {current_camera}, falling back to default camera")
                 log_message(f"Failed to open camera {current_camera}, falling back to default camera", "warning")
                 self.video = cv2.VideoCapture(0)  # Fallback to default camera
+            
+            # If we still can't open a camera, create a dummy one
+            if not self.video or not self.video.isOpened():
+                print("No camera available - creating mock camera")
+                log_message("No physical camera available - using simulated camera", "warning")
+                self.setup_mock_camera()
+                return
                 
             # Configure camera properties
             self.video.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
@@ -85,11 +112,26 @@ class VideoCamera:
             # Verify camera is working
             success, _ = self.video.read()
             if not success:
+                print("Camera opened but failed to read frame")
                 log_message("Camera opened but failed to read frame", "warning")
+                self.setup_mock_camera()
         except Exception as e:
+            print(f"Error initializing camera: {str(e)}")
             log_message(f"Error initializing camera: {str(e)}", "error")
-            # Create a dummy capture as fallback
-            self.video = cv2.VideoCapture(0)
+            # Create a mock camera as fallback
+            self.setup_mock_camera()
+    
+    def setup_mock_camera(self):
+        """Set up a mock camera that generates synthetic frames"""
+        self.is_mock_camera = True
+        self.mock_frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+        # Draw a colorful pattern on the mock frame
+        cv2.rectangle(self.mock_frame, (0, 0), (frame_width, frame_height), (50, 50, 50), -1)
+        cv2.putText(self.mock_frame, "Mock Camera Feed", (50, frame_height//2), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        # Add a circle that will move around to simulate a video
+        self.circle_x, self.circle_y = frame_width//2, frame_height//2
+        self.dx, self.dy = 5, 3
 
     def __del__(self):
         self.video.release()
@@ -98,12 +140,35 @@ class VideoCamera:
         global system_status, last_log_time
         
         with self.lock:
-            # Check camera status
-            success, frame = self.video.read()
-            if not success:
-                log_message("Error: Failed to read frame from camera", "error")
-                system_status = "error"
-                return None
+            # Check if we're using a mock camera
+            if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
+                # Create a mock frame with movement
+                frame = self.mock_frame.copy()
+                # Move the circle
+                self.circle_x += self.dx
+                self.circle_y += self.dy
+                # Bounce off edges
+                if self.circle_x <= 20 or self.circle_x >= frame_width-20:
+                    self.dx *= -1
+                if self.circle_y <= 20 or self.circle_y >= frame_height-20:
+                    self.dy *= -1
+                # Draw the moving circle
+                cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
+                success = True
+            else:
+                # Real camera - check status
+                try:
+                    success, frame = self.video.read()
+                    if not success or frame is None:
+                        print("Failed to read frame from camera")
+                        log_message("Error: Failed to read frame from camera", "error")
+                        system_status = "error"
+                        return None
+                except Exception as e:
+                    print(f"Exception reading frame: {str(e)}")
+                    log_message(f"Error reading camera frame: {str(e)}", "error")
+                    system_status = "error"
+                    return None
 
             start_time = datetime.now()
             self.frame_count += 1
@@ -218,11 +283,22 @@ def generate_frames():
 
 def create_placeholder_frame(message):
     """Create a placeholder frame with an error message"""
-    # Create a black frame with text
-    frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    cv2.putText(frame, message, (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-    _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-    return jpeg.tobytes()
+    try:
+        # Create a black frame with text
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(frame, message, (50, 240), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        return jpeg.tobytes()
+    except Exception as e:
+        print(f"Error creating placeholder frame: {str(e)}")
+        # Create an even simpler fallback frame
+        try:
+            simple_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            _, jpeg = cv2.imencode('.jpg', simple_frame)
+            return jpeg.tobytes()
+        except:
+            # Last resort - return an empty JPEG
+            return b''
 
 @app.route('/video_feed')
 def video_feed():
@@ -231,11 +307,19 @@ def video_feed():
         global video_stream
         if video_stream is None:
             video_stream = VideoCamera()
+        
+        # Print debug info to server console
+        print(f"Video feed requested. Camera status: {'OK' if video_stream and video_stream.video and video_stream.video.isOpened() else 'NOT READY'}")
             
         return Response(generate_frames(),
                        mimetype='multipart/x-mixed-replace; boundary=frame')
     except Exception as e:
+        import traceback
+        print(f"ERROR IN VIDEO FEED: {str(e)}")
+        print(traceback.format_exc())
+        
         log_message(f"Error in video feed: {str(e)}", "error")
+        
         # Return a static error image
         error_frame = create_placeholder_frame("Error: Camera unavailable")
         return Response(b'--frame\r\n'
@@ -570,7 +654,10 @@ def log_message(message, level="info"):
         message: The message to log
         level: The level of the message (info, warning, error)
     """
-    global system_status
+    global system_status, logs, errors, socketio
+    
+    # Print to console as well for debugging
+    print(f"[{level.upper()}] {message}")
     
     # Create timestamp
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
