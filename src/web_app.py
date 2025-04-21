@@ -21,6 +21,7 @@ from flask_socketio import SocketIO, emit
 from detector.yolo import YOLODetector
 from counter.counter import PersonCounter
 from utils.visualization import draw_results
+from camera.fixed_camera import Camera  # Use the fixed camera implementation
 
 # Initialize Flask and SocketIO
 app = Flask(__name__, 
@@ -57,354 +58,7 @@ with app.app_context():
     logs = []
     errors = []
 
-class VideoCamera:
-    def __init__(self):
-        # Try opening the camera with multiple attempts if needed
-        self.video = None
-        self.connect_camera()
-        
-        self.lock = eventlet.semaphore.Semaphore()  # Use eventlet's semaphore
-        self.is_tracking = False
-        self.frame_count = 0
-        self.fps_start_time = datetime.now()
-        self.actual_fps = 0
-        self.last_error_check = datetime.now()
-    
-    def connect_camera(self):
-        """Try to establish camera connection with retry logic"""
-        # Try to open camera - with fallback to default camera 0 if specified one fails
-        try:
-            print(f"Attempting to connect to camera {current_camera}")
-            
-            # On macOS, try a special approach for camera access
-            if sys.platform == 'darwin':
-                # For macOS, we might need to try both 0 and 1
-                for cam_id in [current_camera, 0, 1]:
-                    try:
-                        self.video = cv2.VideoCapture(cam_id)
-                        if self.video.isOpened():
-                            print(f"Successfully opened camera {cam_id}")
-                            break
-                    except:
-                        continue
-            # For Raspberry Pi, use the Pi camera module if available
-            elif sys.platform == 'linux':
-                try:
-                    # First try with camera index for USB cameras
-                    self.video = cv2.VideoCapture(current_camera)
-                    if not self.video.isOpened():
-                        # Try different Pi camera module approaches
-                        print("Trying Raspberry Pi camera module...")
-                        
-                        # Try standard Pi camera approach
-                        self.video = cv2.VideoCapture(0, cv2.CAP_V4L2)
-                        
-                        if not self.video.isOpened():
-                            # Try legacy Pi camera approach
-                            self.video = cv2.VideoCapture(0, cv2.CAP_V4L)
-                            
-                        if not self.video.isOpened():
-                            # Try GSTREAMER as a last resort
-                            try:
-                                cam_str = "v4l2src device=/dev/video0 ! video/x-raw, width=640, height=480 ! videoconvert ! appsink"
-                                self.video = cv2.VideoCapture(cam_str, cv2.CAP_GSTREAMER)
-                            except:
-                                print("GStreamer pipeline failed")
-                except Exception as e:
-                    print(f"Error with Raspberry Pi camera: {str(e)}")
-            else:
-                # Standard approach for other platforms
-                self.video = cv2.VideoCapture(current_camera)
-            
-            # If camera still not opened, try the default
-            if not self.video or not self.video.isOpened():
-                print(f"Failed to open camera {current_camera}, falling back to default camera")
-                log_message(f"Failed to open camera {current_camera}, falling back to default camera", "warning")
-                self.video = cv2.VideoCapture(0)  # Fallback to default camera
-            
-            # If we still can't open a camera, create a dummy one
-            if not self.video or not self.video.isOpened():
-                print("No camera available - creating mock camera")
-                log_message("No physical camera available - using simulated camera", "warning")
-                self.setup_mock_camera()
-                return
-                
-            # Configure camera properties
-            self.video.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
-            self.video.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
-            self.video.set(cv2.CAP_PROP_FPS, frame_rate)
-            
-            # Verify camera is working
-            success, _ = self.video.read()
-            if not success:
-                print("Camera opened but failed to read frame")
-                log_message("Camera opened but failed to read frame", "warning")
-                self.setup_mock_camera()
-        except Exception as e:
-            print(f"Error initializing camera: {str(e)}")
-            log_message(f"Error initializing camera: {str(e)}", "error")
-            # Create a mock camera as fallback
-            self.setup_mock_camera()
-    
-    def setup_mock_camera(self):
-        """Set up a mock camera that generates synthetic frames"""
-        self.is_mock_camera = True
-        self.mock_frame = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
-        # Draw a colorful pattern on the mock frame
-        cv2.rectangle(self.mock_frame, (0, 0), (frame_width, frame_height), (50, 50, 50), -1)
-        cv2.putText(self.mock_frame, "Mock Camera Feed", (50, frame_height//2), 
-                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-        # Add a circle that will move around to simulate a video
-        self.circle_x, self.circle_y = frame_width//2, frame_height//2
-        self.dx, self.dy = 5, 3
-
-    def __del__(self):
-        if hasattr(self, 'video') and self.video is not None and (not hasattr(self, 'is_mock_camera') or not self.is_mock_camera):
-            try:
-                self.video.release()
-            except:
-                pass
-
-    def get_frame(self):
-        global system_status, last_log_time
-        
-        with self.lock:
-            try:
-                # Check if we're using a mock camera
-                if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
-                    # Create a mock frame with movement
-                    frame = self.mock_frame.copy()
-                    # Move the circle
-                    self.circle_x += self.dx
-                    self.circle_y += self.dy
-                    # Bounce off edges
-                    if self.circle_x <= 20 or self.circle_x >= frame_width-20:
-                        self.dx *= -1
-                    if self.circle_y <= 20 or self.circle_y >= frame_height-20:
-                        self.dy *= -1
-                    # Draw the moving circle
-                    cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
-                else:
-                    # Real camera - check status
-                    try:
-                        # Make sure camera is still open
-                        if self.video is None or not self.video.isOpened():
-                            print("Camera is closed, attempting to reconnect...")
-                            self.connect_camera()
-                            if hasattr(self, 'is_mock_camera') and self.is_mock_camera:
-                                # If we're now in mock camera mode, create a mock frame instead of recursively calling
-                                frame = self.mock_frame.copy()
-                                cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
-                            
-                        # Read a frame from the camera
-                        success, frame = self.video.read()
-                        if not success or frame is None:
-                            print("Failed to read frame from camera")
-                            log_message("Error: Failed to read frame from camera", "error")
-                            system_status = "error"
-                            # Fall back to mock camera instead of returning None
-                            self.setup_mock_camera()
-                            # Create a mock frame directly instead of recursively calling
-                            frame = self.mock_frame.copy()
-                            # Move the circle
-                            self.circle_x += self.dx
-                            self.circle_y += self.dy
-                            # Bounce off edges
-                            if self.circle_x <= 20 or self.circle_x >= frame_width-20:
-                                self.dx *= -1
-                            if self.circle_y <= 20 or self.circle_y >= frame_height-20:
-                                self.dy *= -1
-                            # Draw the moving circle
-                            cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
-                    except Exception as e:
-                        print(f"Exception reading frame: {str(e)}")
-                        log_message(f"Error reading camera frame: {str(e)}", "error")
-                        system_status = "error"
-                        # Fall back to mock camera
-                        self.setup_mock_camera()
-                        # Create a mock frame directly instead of recursively calling
-                        frame = self.mock_frame.copy()
-                        # Move the circle
-                        self.circle_x += self.dx
-                        self.circle_y += self.dy
-                        # Bounce off edges
-                        if self.circle_x <= 20 or self.circle_x >= frame_width-20:
-                            self.dx *= -1
-                        if self.circle_y <= 20 or self.circle_y >= frame_height-20:
-                            self.dy *= -1
-                        # Draw the moving circle
-                        cv2.circle(frame, (self.circle_x, self.circle_y), 15, (0, 120, 255), -1)
-
-                # Process frame stats and tracking
-                self.process_frame_stats()
-                
-                # Only process tracking if we have a valid frame
-                if self.is_tracking and frame is not None and frame.size > 0:
-                    try:
-                        processed_frame = self.process_tracking(frame)
-                        if processed_frame is not None:
-                            frame = processed_frame
-                    except Exception as e:
-                        print(f"Error in frame processing: {str(e)}")
-                        # Continue with original frame if tracking fails
-                        log_message(f"Error in frame tracking: {str(e)}", "error")
-
-                # Encode the frame
-                _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-                return jpeg.tobytes()
-                
-            except Exception as e:
-                print(f"Error in get_frame: {str(e)}")
-                return create_placeholder_frame("Error in frame processing")
-
-    def process_frame_stats(self):
-        """Process frame statistics including FPS calculation"""
-        current_time = datetime.now()
-        self.frame_count += 1
-        
-        # Calculate actual FPS every second
-        time_diff = (current_time - self.fps_start_time).total_seconds()
-        if time_diff >= 1.0:
-            self.actual_fps = self.frame_count / time_diff
-            stats["frame_rate"] = round(self.actual_fps, 1)
-            self.frame_count = 0
-            self.fps_start_time = current_time
-            
-            # Check if frame rate is too low (possible performance issue)
-            if self.actual_fps < (frame_rate * 0.7) and self.actual_fps > 0:
-                log_message(f"Warning: Low frame rate detected ({self.actual_fps:.1f} FPS)", "warning")
-                system_status = "warning"
-
-        # Check for potential errors every 5 seconds
-        if (current_time - self.last_error_check).total_seconds() >= 5:
-            self.check_camera_errors()
-            self.last_error_check = current_time
-
-    def process_tracking(self, frame):
-        """Process object detection and tracking on the frame"""
-        global last_log_time, system_status
-        
-        if frame is None:
-            print("Error: Received None frame in process_tracking")
-            return frame
-            
-        try:
-            # Measure detection time for performance monitoring
-            detect_start = datetime.now()
-            
-            # Make a deep copy of the frame to avoid OpenCV reference issues
-            try:
-                process_frame = frame.copy()
-            except Exception as e:
-                print(f"Error making frame copy: {e}")
-                return frame
-            
-            # Initialize variables with safe defaults
-            detections = []
-            count = 0
-            
-            # Call detect() with proper error handling
-            try:
-                # Validate frame before detection
-                if process_frame.size == 0 or len(process_frame.shape) != 3:
-                    print("Invalid frame dimensions for detection")
-                else:
-                    # Call detector with explicit confidence threshold
-                    detections = detector.detect(process_frame, confidence_threshold)
-                    
-                    # Ensure detections is a proper list
-                    if detections is None:
-                        detections = []
-                        print("Warning: detector returned None")
-                    elif not isinstance(detections, list):
-                        try:
-                            detections = list(detections)
-                            print(f"Converted detections from {type(detections).__name__} to list")
-                        except Exception as conv_err:
-                            print(f"Could not convert detections to list: {conv_err}")
-                            detections = []
-            except Exception as det_err:
-                print(f"Detection error: {det_err}")
-                detections = []
-            
-            # Update counter with validated detections list
-            try:
-                if isinstance(detections, list):
-                    count = counter.update(detections)
-                else:
-                    count = 0
-            except Exception as counter_err:
-                print(f"Counter update error: {counter_err}")
-                count = 0
-            
-            # Draw results on frame with error handling
-            result_frame = process_frame
-            try:
-                result_frame = draw_results(process_frame, detections, count)
-            except Exception as draw_err:
-                print(f"Error drawing results: {draw_err}")
-            
-            # Update stats with tracking data
-            detect_time = (datetime.now() - detect_start).total_seconds() * 1000
-            try:
-                self.update_stats(count, detect_time)
-            except Exception as stats_err:
-                print(f"Error updating stats: {stats_err}")
-            
-            # Log count based on frequency settings
-            current_time = datetime.now()
-            if logging_enabled and (current_time - last_log_time).total_seconds() >= log_frequency:
-                try:
-                    log_message(f"Current count: {count} people detected", "info")
-                    last_log_time = current_time
-                except Exception as log_err:
-                    print(f"Error logging count: {log_err}")
-                    
-            return result_frame
-                    
-        except Exception as e:
-            print(f"Error in frame processing: {str(e)}")
-            system_status = "error"
-            try:
-                log_message(f"Error during frame processing: {str(e)}", "error")
-            except:
-                pass
-            # Return original frame if processing failed
-            return frame
-                    
-        except Exception as e:
-            log_message(f"Error during detection: {str(e)}", "error")
-            system_status = "error"
-            
-        return frame
-
-    def update_stats(self, count, detect_time):
-        """Update detection and tracking statistics"""
-        stats["detection_time"] = round(detect_time, 1)
-        stats["current_count"] = count
-        if "total_counts" not in stats:
-            stats["total_counts"] = []
-        stats["total_counts"].append(count)
-        stats["average"] = sum(stats["total_counts"]) / len(stats["total_counts"])
-        stats["minimum"] = min(stats["total_counts"])
-        stats["peak"] = max(stats["total_counts"])
-        stats["system_load"] = min(90, stats["detection_time"] / 10)
-        socketio.emit('stats_update', stats)
-
-    def check_camera_errors(self):
-        """Check for camera-related errors"""
-        if not hasattr(self, 'is_mock_camera') or not self.is_mock_camera:
-            actual_width = self.video.get(cv2.CAP_PROP_FRAME_WIDTH)
-            actual_height = self.video.get(cv2.CAP_PROP_FRAME_HEIGHT)
-            if actual_width != frame_width or actual_height != frame_height:
-                log_message(f"Warning: Camera resolution mismatch. Expected: {frame_width}x{frame_height}, Got: {actual_width}x{actual_height}", "warning")
-                system_status = "warning"
-
-        if stats["system_load"] > 80:
-            log_message("Warning: High system load detected", "warning")
-            system_status = "warning"
-
-video_stream = VideoCamera()
+video_stream = None
 
 @app.route('/')
 def index():
@@ -482,7 +136,7 @@ def video_feed():
         # Initialize the video stream if it doesn't exist yet
         global video_stream
         if video_stream is None:
-            video_stream = VideoCamera()
+            video_stream = Camera()
         
         # Print debug info to server console
         print(f"Video feed requested. Camera status: {'OK' if video_stream and hasattr(video_stream, 'video') and video_stream.video and video_stream.video.isOpened() else 'Using mock camera' if hasattr(video_stream, 'is_mock_camera') and video_stream.is_mock_camera else 'NOT READY'}")
@@ -520,7 +174,7 @@ def handle_camera(data):
     current_camera = int(data['camera'])
     if video_stream:
         del video_stream
-    video_stream = VideoCamera()
+    video_stream = Camera(camera_id=current_camera)
     log_message(f"Changed to camera {current_camera}")
 
 @socketio.on('change_sensitivity')
@@ -568,7 +222,7 @@ def handle_config_update(config):
                 global video_stream
                 if video_stream:
                     del video_stream
-                video_stream = VideoCamera()
+                video_stream = Camera(camera_id=current_camera)
                 log_message(f"Camera configuration updated: Camera {current_camera}, {frame_width}x{frame_height} @ {frame_rate}fps", "info")
             
         # Update detection settings
@@ -760,7 +414,7 @@ def handle_fix_error(data):
             global video_stream, current_camera
             if video_stream:
                 del video_stream
-            video_stream = VideoCamera()
+            video_stream = Camera(camera_id=current_camera)
             log_message(f"Auto-fix: Reinitialized camera {current_camera}", "info")
             
         elif source == 'detection':
@@ -973,6 +627,7 @@ def update_system_status():
 
 # Ensure camera is released when the application stops
 def cleanup():
+    global video_stream
     if video_stream:
         del video_stream
 

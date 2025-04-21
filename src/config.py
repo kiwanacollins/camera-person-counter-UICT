@@ -1,22 +1,18 @@
 # Configuration settings for the camera person counter system
 
-# Path to the YOLO model weights
-YOLO_MODEL_PATH = "models/yolo_weights.h5"
+# YOLO model settings
+YOLO_MODEL_PATH = "models/yolov4-tiny.weights"
+YOLO_CONFIG_PATH = "models/yolov4-tiny.cfg"
+DETECTION_THRESHOLD = 0.4  # Lowered from 0.5 to improve detection rate
+CONFIDENCE_THRESHOLD = 0.4  # Lowered from 0.5
+NMS_THRESHOLD = 0.3  # Lowered from 0.4 to reduce overlapping detections
 
-# Path to the YOLO configuration file
-YOLO_CONFIG_PATH = "models/yolo_config.cfg"
+# Camera settings - reduced resolution for better performance
+CAMERA_RESOLUTION = (480, 360)  # Reduced from 640x480
+FRAME_RATE = 15  # Reduced from 30 for better processing performance
 
-# Detection threshold for YOLO
-DETECTION_THRESHOLD = 0.5
-
-# Minimum confidence for counting a person
-COUNTING_CONFIDENCE = 0.6
-
-# Camera settings
-CAMERA_RESOLUTION = (640, 480)
-FRAME_RATE = 30
-
-# Configuration parameters
-CONFIDENCE_THRESHOLD = 0.5
-NMS_THRESHOLD = 0.4
+# Additional performance settings
 WEBCAM_INDEX = 0
+ENABLE_HARDWARE_ACCELERATION = True
+PROCESS_EVERY_N_FRAMES = 2  # Process every 2nd frame
+MAX_DETECTION_FPS = 15  # Cap detection processing rate

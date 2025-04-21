@@ -3,53 +3,77 @@ import sys
 import os
 import numpy as np
 
-# Add project root to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.detector.yolo import YOLODetector
 from src.counter.counter import PersonCounter
 from src.utils.visualization import draw_results
-from src.camera.fixed_camera import Camera
+from src.camera.fixed_camera_new import Camera
 import time
 
 def main():
     # Initialize components
     detector = YOLODetector()
     counter = PersonCounter()
-    
-    # Initialize the fixed camera implementation
     camera = Camera(camera_id=0)
+    
+    # Performance tracking
+    frame_time = time.time()
+    fps = 0
+    fps_display_interval = 30  # Update FPS display every 30 frames
+    frame_count = 0
     
     try:
         while True:
-            # Get frame from the camera (returns JPEG bytes)
-            jpeg_bytes = camera.get_frame()
-            
-            # Convert JPEG bytes back to a frame
-            frame_buffer = np.frombuffer(jpeg_bytes, dtype=np.uint8)
-            frame = cv2.imdecode(frame_buffer, cv2.IMREAD_COLOR)
-            
-            if frame is None or frame.size == 0:
-                print("Invalid frame received, skipping frame")
+            # Get frame from camera
+            frame_bytes = camera.get_frame()
+            if frame_bytes is None:
                 continue
+            
+            # Convert JPEG bytes to frame
+            try:
+                frame_buffer = np.frombuffer(frame_bytes, dtype=np.uint8)
+                frame = cv2.imdecode(frame_buffer, cv2.IMREAD_COLOR)
+                if frame is None or frame.size == 0:
+                    continue
+            except Exception as e:
+                print(f"Error decoding frame: {e}")
+                continue
+            
+            # Process frame
+            try:
+                # Update FPS calculation
+                frame_count += 1
+                if frame_count % fps_display_interval == 0:
+                    current_time = time.time()
+                    fps = fps_display_interval / (current_time - frame_time)
+                    frame_time = current_time
                 
-            # Detect persons
-            detections = detector.detect(frame)
+                # Run detection
+                detections = detector.detect(frame)
+                
+                # Update counter
+                count = counter.update(detections)
+                
+                # Draw results and FPS
+                output_frame = draw_results(frame, detections, count)
+                cv2.putText(output_frame, f"FPS: {fps:.1f}", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                
+                # Display result
+                cv2.imshow('Person Counter', output_frame)
+                
+            except Exception as e:
+                print(f"Error processing frame: {e}")
+                continue
             
-            # Count persons
-            count = counter.update(detections)  # Changed from count() to update()
-            
-            # Draw results
-            output_frame = draw_results(frame, detections, count)
-            
-            # Display result
-            cv2.imshow('Person Counter', output_frame)
-            
+            # Check for exit
             if cv2.waitKey(1) & 0xFF == ord('q'):
                 break
                 
+    except KeyboardInterrupt:
+        print("\nExiting...")
     finally:
-        # Camera will be released automatically in __del__
         cv2.destroyAllWindows()
 
 if __name__ == "__main__":
